@@ -19,6 +19,9 @@ type DHCPService struct {
 }
 
 func dhcpSetup(etc *etcd.Client) chan bool {
+	etc.CreateDir("dhcp", 0)
+	etc.CreateDir("dhcp/mac", 0)
+	etc.CreateDir("dhcp/ip", 0)
 	exit := make(chan bool, 1)
 	go func() {
 		dhcp4.ListenAndServe(&DHCPService{
@@ -69,12 +72,18 @@ func (d *DHCPService) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, 
 }
 
 func (d *DHCPService) getIPFromMAC(mac net.HardwareAddr) net.IP {
-	response, _ := d.etcdClient.Get("dhcp/"+mac.String(), false, false)
+	response, _ := d.etcdClient.Get("dhcp/mac/"+mac.String(), false, false)
 	ip := net.ParseIP(response.Node.Value)
 	if ip != nil {
-		d.etcdClient.Set("dhcp/"+ip.String(), mac.String(), uint64(d.leaseDuration.Seconds()+0.5))
+		d.etcdClient.Set("dhcp/ip/"+ip.String(), mac.String(), uint64(d.leaseDuration.Seconds()+0.5))
 		return ip
 	}
 
-	return net.ParseIP("10.100.3.254") // FIXME: generate (and store!) an IP for this MAC address
+	// TODO: determine whether or not this MAC should be permitted to get an IP at all (blacklist? whitelist?)
+	// TODO: locate an unused IP address
+	// TODO: write this new lease to the database under both "dhcp/mac/$MAC" and a MAC pointer to "dhcp/ip/$IP"
+	// TODO: determine dhcp4.options based on server default config + MAC config
+	// TODO: return valid IP as expected
+
+	return net.ParseIP("10.100.3.254") // FIXME: instead of this obviously wrong action, generate (and store!) an IP for this MAC address
 }
