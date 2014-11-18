@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"net"
 	"time"
 
@@ -11,8 +12,8 @@ import (
 // DHCPService is the DHCP server instance
 type DHCPService struct {
 	ip                net.IP
-	authoritativePool net.IPNet
-	guestPool         net.IPNet     // must be within authoritativePool (at least for now)
+	authoritativePool *net.IPNet
+	guestPool         *net.IPNet    // must be within authoritativePool (at least for now)
 	leaseDuration     time.Duration // FIXME: make a separate duration per pool?
 	options           dhcp4.Options // FIXME: make different options per pool?
 	etcdClient        *etcd.Client
@@ -23,17 +24,22 @@ func dhcpSetup(etc *etcd.Client) chan bool {
 	etc.CreateDir("dhcp/mac", 0)
 	etc.CreateDir("dhcp/ip", 0)
 	exit := make(chan bool, 1)
+	serverIP := net.ParseIP("172.16.193.1")
+	_, authoritativePool, _ := net.ParseCIDR("172.16.193.0/24")
+	guestPool := authoritativePool
 	go func() {
-		dhcp4.ListenAndServe(&DHCPService{
-			ip:            net.ParseIP("10.100.0.121"),
-			leaseDuration: time.Hour * 12,
-			etcdClient:    etc,
+		fmt.Println(dhcp4.ListenAndServeIf("vmnet2", &DHCPService{
+			ip:                serverIP,
+			leaseDuration:     time.Hour * 12,
+			etcdClient:        etc,
+			authoritativePool: authoritativePool,
+			guestPool:         guestPool,
 			options: dhcp4.Options{
-				dhcp4.OptionSubnetMask:       net.ParseIP("255.255.252.0"),
-				dhcp4.OptionRouter:           net.ParseIP("10.100.0.1"),
-				dhcp4.OptionDomainNameServer: net.ParseIP("10.100.1.1"),
+				dhcp4.OptionSubnetMask:       net.ParseIP("255.255.255.0"),
+				dhcp4.OptionRouter:           serverIP,
+				dhcp4.OptionDomainNameServer: serverIP,
 			},
-		})
+		}))
 		exit <- true
 	}()
 	return exit
@@ -45,18 +51,19 @@ func (d *DHCPService) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, 
 	case dhcp4.Discover:
 		// FIXME: send to StatHat and/or increment a counter
 		mac := packet.CHAddr()
+		fmt.Printf("DHCP Discover from %s\n", mac.String())
 		ip := d.getIPFromMAC(mac)
 		if ip != nil {
+			fmt.Printf("DHCP Discover from %s (we return %s)\n", mac.String(), ip.String())
 			return dhcp4.ReplyPacket(packet, dhcp4.Offer, d.ip, ip, d.leaseDuration, d.options.SelectOrderOrAll(options[dhcp4.OptionParameterRequestList]))
 		}
 		return nil
 	case dhcp4.Request:
 		// FIXME: send to StatHat and/or increment a counter
-		if server, ok := options[dhcp4.OptionServerIdentifier]; ok && !net.IP(server).Equal(d.ip) {
-			return nil // not directed at us, so let's ignore it.
-		}
+		mac := packet.CHAddr()
+		fmt.Printf("DHCP Request from %s...\n", mac.String())
 		if requestedIP := net.IP(options[dhcp4.OptionRequestedIPAddress]); len(requestedIP) == 4 { // valid and IPv4
-			mac := packet.CHAddr()
+			fmt.Printf("DHCP Request from %s wanting %s\n", mac.String(), requestedIP.String())
 			ip := d.getIPFromMAC(mac)
 			if ip.Equal(requestedIP) {
 				return dhcp4.ReplyPacket(packet, dhcp4.ACK, d.ip, requestedIP, d.leaseDuration, d.options.SelectOrderOrAll(options[dhcp4.OptionParameterRequestList]))
@@ -65,25 +72,48 @@ func (d *DHCPService) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, 
 		return dhcp4.ReplyPacket(packet, dhcp4.NAK, d.ip, nil, 0, nil)
 	case dhcp4.Release:
 		// FIXME: release from DB?  tick a flag?  increment a counter?  send to StatHat?
+		mac := packet.CHAddr()
+		fmt.Printf("DHCP Release from %s\n", mac.String())
 	case dhcp4.Decline:
 		// FIXME: release from DB?  tick a flag?  increment a counter?  send to StatHat?
+		mac := packet.CHAddr()
+		fmt.Printf("DHCP Decline from %s\n", mac.String())
 	}
 	return nil
 }
 
 func (d *DHCPService) getIPFromMAC(mac net.HardwareAddr) net.IP {
 	response, _ := d.etcdClient.Get("dhcp/mac/"+mac.String(), false, false)
-	ip := net.ParseIP(response.Node.Value)
-	if ip != nil {
-		d.etcdClient.Set("dhcp/ip/"+ip.String(), mac.String(), uint64(d.leaseDuration.Seconds()+0.5))
-		return ip
+	if response != nil && response.Node != nil {
+		ip := net.ParseIP(response.Node.Value)
+		if ip != nil {
+			d.etcdClient.Set("dhcp/ip/"+ip.String(), mac.String(), uint64(d.leaseDuration.Seconds()+0.5))
+			return ip
+		}
 	}
 
 	// TODO: determine whether or not this MAC should be permitted to get an IP at all (blacklist? whitelist?)
-	// TODO: locate an unused IP address
-	// TODO: write this new lease to the database under both "dhcp/mac/$MAC" and a MAC pointer to "dhcp/ip/$IP"
-	// TODO: determine dhcp4.options based on server default config + MAC config
-	// TODO: return valid IP as expected
 
-	return net.ParseIP("10.100.3.254") // FIXME: instead of this obviously wrong action, generate (and store!) an IP for this MAC address
+	// locate an unused IP address (can this be more efficient?  yes!  FIXME)
+	var ip net.IP
+	for testIP := dhcp4.IPAdd(d.guestPool.IP, 1); d.guestPool.Contains(testIP); testIP = dhcp4.IPAdd(testIP, 1) {
+		fmt.Println(testIP.String())
+		response, _ := d.etcdClient.Get("dhcp/ip/"+testIP.String(), false, false)
+		if response == nil || response.Node == nil { // this means that the IP is not already occupied
+			ip = testIP
+			break
+		}
+	}
+
+	if ip != nil { // if nil then we're out of IP addresses!
+		//d.etcdClient.Set("dhcp/ip/"+ip.String(), mac.String(), uint64(d.leaseDuration.Seconds()+0.5))
+
+		// TODO: write this new lease to the database under both "dhcp/mac/$MAC" and a MAC pointer to "dhcp/ip/$IP"
+		// TODO: determine dhcp4.options based on server default config + MAC config
+		// TODO: return valid IP as expected
+
+		return ip
+	}
+
+	return nil
 }

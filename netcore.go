@@ -11,7 +11,7 @@ func main() {
 
 	select {
 	case <-dhcpExit:
-		fmt.Printf("DHCP Exited")
+		fmt.Println("DHCP Exited")
 		os.Exit(1)
 	}
 }
