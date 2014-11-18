@@ -15,29 +15,27 @@ type DHCPService struct {
 	authoritativePool *net.IPNet
 	guestPool         *net.IPNet    // must be within authoritativePool (at least for now)
 	leaseDuration     time.Duration // FIXME: make a separate duration per pool?
-	options           dhcp4.Options // FIXME: make different options per pool?
+	defaultOptions    dhcp4.Options // FIXME: make different options per pool?
 	etcdClient        *etcd.Client
 }
 
 func dhcpSetup(etc *etcd.Client) chan bool {
 	etc.CreateDir("dhcp", 0)
-	etc.CreateDir("dhcp/mac", 0)
-	etc.CreateDir("dhcp/ip", 0)
 	exit := make(chan bool, 1)
 	serverIP := net.ParseIP("172.16.193.1")
 	_, authoritativePool, _ := net.ParseCIDR("172.16.193.0/24")
 	guestPool := authoritativePool
 	go func() {
 		fmt.Println(dhcp4.ListenAndServeIf("vmnet2", &DHCPService{
-			ip:                serverIP,
+			ip:                serverIP.To4(),
 			leaseDuration:     time.Hour * 12,
 			etcdClient:        etc,
 			authoritativePool: authoritativePool,
 			guestPool:         guestPool,
-			options: dhcp4.Options{
-				dhcp4.OptionSubnetMask:       net.ParseIP("255.255.255.0"),
-				dhcp4.OptionRouter:           serverIP,
-				dhcp4.OptionDomainNameServer: serverIP,
+			defaultOptions: dhcp4.Options{
+				dhcp4.OptionSubnetMask:       net.ParseIP("255.255.255.0").To4(),
+				dhcp4.OptionRouter:           serverIP.To4(),
+				dhcp4.OptionDomainNameServer: serverIP.To4(),
 			},
 		}))
 		exit <- true
@@ -46,7 +44,7 @@ func dhcpSetup(etc *etcd.Client) chan bool {
 }
 
 // ServeDHCP is called by dhcp4.ListenAndServe when the service is started
-func (d *DHCPService) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, options dhcp4.Options) (response dhcp4.Packet) {
+func (d *DHCPService) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, reqOptions dhcp4.Options) (response dhcp4.Packet) {
 	switch msgType {
 	case dhcp4.Discover:
 		// FIXME: send to StatHat and/or increment a counter
@@ -54,22 +52,37 @@ func (d *DHCPService) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, 
 		fmt.Printf("DHCP Discover from %s\n", mac.String())
 		ip := d.getIPFromMAC(mac)
 		if ip != nil {
+			options := d.getOptionsFromMAC(mac)
 			fmt.Printf("DHCP Discover from %s (we return %s)\n", mac.String(), ip.String())
-			return dhcp4.ReplyPacket(packet, dhcp4.Offer, d.ip, ip, d.leaseDuration, d.options.SelectOrderOrAll(options[dhcp4.OptionParameterRequestList]))
+			for x, y := range reqOptions {
+				fmt.Printf("\tR[%v] %v %s\n", x, y, y)
+			}
+			for x, y := range options {
+				fmt.Printf("\tO[%v] %v %s\n", x, y, y)
+			}
+			return dhcp4.ReplyPacket(packet, dhcp4.Offer, d.ip.To4(), ip.To4(), d.leaseDuration, options.SelectOrderOrAll(reqOptions[dhcp4.OptionParameterRequestList]))
 		}
 		return nil
 	case dhcp4.Request:
 		// FIXME: send to StatHat and/or increment a counter
 		mac := packet.CHAddr()
 		fmt.Printf("DHCP Request from %s...\n", mac.String())
-		if requestedIP := net.IP(options[dhcp4.OptionRequestedIPAddress]); len(requestedIP) == 4 { // valid and IPv4
+		if requestedIP := net.IP(reqOptions[dhcp4.OptionRequestedIPAddress]); len(requestedIP) == 4 { // valid and IPv4
 			fmt.Printf("DHCP Request from %s wanting %s\n", mac.String(), requestedIP.String())
 			ip := d.getIPFromMAC(mac)
 			if ip.Equal(requestedIP) {
-				return dhcp4.ReplyPacket(packet, dhcp4.ACK, d.ip, requestedIP, d.leaseDuration, d.options.SelectOrderOrAll(options[dhcp4.OptionParameterRequestList]))
+				options := d.getOptionsFromMAC(mac)
+				fmt.Printf("DHCP Request from %s wanting %s (we agree)\n", mac.String(), requestedIP.String())
+				for x, y := range reqOptions {
+					fmt.Printf("\tR[%v] %v %s\n", x, y, y)
+				}
+				for x, y := range options {
+					fmt.Printf("\tO[%v] %v %s\n", x, y, y)
+				}
+				return dhcp4.ReplyPacket(packet, dhcp4.ACK, d.ip.To4(), requestedIP.To4(), d.leaseDuration, options.SelectOrderOrAll(reqOptions[dhcp4.OptionParameterRequestList]))
 			}
 		}
-		return dhcp4.ReplyPacket(packet, dhcp4.NAK, d.ip, nil, 0, nil)
+		return dhcp4.ReplyPacket(packet, dhcp4.NAK, d.ip.To4(), nil, 0, nil)
 	case dhcp4.Release:
 		// FIXME: release from DB?  tick a flag?  increment a counter?  send to StatHat?
 		mac := packet.CHAddr()
@@ -83,11 +96,11 @@ func (d *DHCPService) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, 
 }
 
 func (d *DHCPService) getIPFromMAC(mac net.HardwareAddr) net.IP {
-	response, _ := d.etcdClient.Get("dhcp/mac/"+mac.String(), false, false)
+	response, _ := d.etcdClient.Get("dhcp/"+mac.String()+"/ip", false, false)
 	if response != nil && response.Node != nil {
 		ip := net.ParseIP(response.Node.Value)
 		if ip != nil {
-			d.etcdClient.Set("dhcp/ip/"+ip.String(), mac.String(), uint64(d.leaseDuration.Seconds()+0.5))
+			d.etcdClient.Set("dhcp/"+ip.String(), mac.String(), uint64(d.leaseDuration.Seconds()+0.5))
 			return ip
 		}
 	}
@@ -98,7 +111,7 @@ func (d *DHCPService) getIPFromMAC(mac net.HardwareAddr) net.IP {
 	var ip net.IP
 	for testIP := dhcp4.IPAdd(d.guestPool.IP, 1); d.guestPool.Contains(testIP); testIP = dhcp4.IPAdd(testIP, 1) {
 		fmt.Println(testIP.String())
-		response, _ := d.etcdClient.Get("dhcp/ip/"+testIP.String(), false, false)
+		response, _ := d.etcdClient.Get("dhcp/"+testIP.String(), false, false)
 		if response == nil || response.Node == nil { // this means that the IP is not already occupied
 			ip = testIP
 			break
@@ -106,7 +119,9 @@ func (d *DHCPService) getIPFromMAC(mac net.HardwareAddr) net.IP {
 	}
 
 	if ip != nil { // if nil then we're out of IP addresses!
-		//d.etcdClient.Set("dhcp/ip/"+ip.String(), mac.String(), uint64(d.leaseDuration.Seconds()+0.5))
+		d.etcdClient.CreateDir("dhcp/"+mac.String(), 0)
+		d.etcdClient.Set("dhcp/"+ip.String(), mac.String(), uint64(d.leaseDuration.Seconds()+0.5))
+		d.etcdClient.Set("dhcp/"+mac.String()+"/ip", ip.String(), uint64(d.leaseDuration.Seconds()+0.5))
 
 		// TODO: write this new lease to the database under both "dhcp/mac/$MAC" and a MAC pointer to "dhcp/ip/$IP"
 		// TODO: determine dhcp4.options based on server default config + MAC config
@@ -116,4 +131,87 @@ func (d *DHCPService) getIPFromMAC(mac net.HardwareAddr) net.IP {
 	}
 
 	return nil
+}
+
+func (d *DHCPService) getOptionsFromMAC(mac net.HardwareAddr) dhcp4.Options {
+	options := d.defaultOptions
+
+	{ // Subnet Mask
+		response, _ := d.etcdClient.Get("dhcp/"+mac.String()+"/mask", false, false)
+		if response != nil && response.Node != nil {
+			if response.Node.Value == "" {
+				delete(options, dhcp4.OptionSubnetMask)
+			} else {
+				options[dhcp4.OptionSubnetMask] = []byte(response.Node.Value)
+			}
+		}
+	}
+
+	{ // Gateway/Router
+		response, _ := d.etcdClient.Get("dhcp/"+mac.String()+"/gw", false, false)
+		if response != nil && response.Node != nil {
+			if response.Node.Value == "" {
+				delete(options, dhcp4.OptionRouter)
+			} else {
+				options[dhcp4.OptionRouter] = []byte(response.Node.Value)
+			}
+		}
+	}
+
+	{ // Name Server
+		response, _ := d.etcdClient.Get("dhcp/"+mac.String()+"/ns", false, false)
+		if response != nil && response.Node != nil {
+			if response.Node.Value == "" {
+				delete(options, dhcp4.OptionDomainNameServer)
+			} else {
+				options[dhcp4.OptionDomainNameServer] = []byte(response.Node.Value)
+			}
+		}
+	}
+
+	{ // Host Name
+		response, _ := d.etcdClient.Get("dhcp/"+mac.String()+"/name", false, false)
+		if response != nil && response.Node != nil {
+			if response.Node.Value == "" {
+				delete(options, dhcp4.OptionHostName)
+			} else {
+				options[dhcp4.OptionHostName] = []byte(response.Node.Value)
+			}
+		}
+	}
+
+	{ // Domain Name
+		response, _ := d.etcdClient.Get("dhcp/"+mac.String()+"/domain", false, false)
+		if response != nil && response.Node != nil {
+			if response.Node.Value == "" {
+				delete(options, dhcp4.OptionDomainName)
+			} else {
+				options[dhcp4.OptionDomainName] = []byte(response.Node.Value)
+			}
+		}
+	}
+
+	{ // Domain Name
+		response, _ := d.etcdClient.Get("dhcp/"+mac.String()+"/broadcast", false, false)
+		if response != nil && response.Node != nil {
+			if response.Node.Value == "" {
+				delete(options, dhcp4.OptionBroadcastAddress)
+			} else {
+				options[dhcp4.OptionBroadcastAddress] = []byte(response.Node.Value)
+			}
+		}
+	}
+
+	{ // NTP Server
+		response, _ := d.etcdClient.Get("dhcp/"+mac.String()+"/ntp", false, false)
+		if response != nil && response.Node != nil {
+			if response.Node.Value == "" {
+				delete(options, dhcp4.OptionNetworkTimeProtocolServers)
+			} else {
+				options[dhcp4.OptionNetworkTimeProtocolServers] = []byte(response.Node.Value)
+			}
+		}
+	}
+
+	return options
 }
