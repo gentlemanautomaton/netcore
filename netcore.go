@@ -9,6 +9,8 @@ func main() {
 	etc := etcdSetup()
 	dhcpExit := dhcpSetup(etc)
 
+	fmt.Println("NETCORE Started.")
+
 	select {
 	case <-dhcpExit:
 		fmt.Println("DHCP Exited")
