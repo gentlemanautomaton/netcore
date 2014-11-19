@@ -12,7 +12,7 @@ import (
 // DHCPService is the DHCP server instance
 type DHCPService struct {
 	ip                net.IP
-	authoritativePool *net.IPNet
+	authoritativePool *net.IPNet    // FIXME: actually use this value for something
 	guestPool         *net.IPNet    // must be within authoritativePool (at least for now)
 	leaseDuration     time.Duration // FIXME: make a separate duration per pool?
 	defaultOptions    dhcp4.Options // FIXME: make different options per pool?
@@ -121,11 +121,6 @@ func (d *DHCPService) getIPFromMAC(mac net.HardwareAddr) net.IP {
 		d.etcdClient.CreateDir("dhcp/"+mac.String(), 0)
 		d.etcdClient.Set("dhcp/"+ip.String(), mac.String(), uint64(d.leaseDuration.Seconds()+0.5))
 		d.etcdClient.Set("dhcp/"+mac.String()+"/ip", ip.String(), uint64(d.leaseDuration.Seconds()+0.5))
-
-		// TODO: write this new lease to the database under both "dhcp/mac/$MAC" and a MAC pointer to "dhcp/ip/$IP"
-		// TODO: determine dhcp4.options based on server default config + MAC config
-		// TODO: return valid IP as expected
-
 		return ip
 	}
 
