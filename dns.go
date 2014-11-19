@@ -9,7 +9,7 @@ import (
 
 func dnsSetup(etc *etcd.Client) chan error {
 	dns.HandleFunc(".", proxyServe)
-	etc.CreateDir("dhcp", 0)
+	etc.CreateDir("dns", 0)
 	exit := make(chan error, 1)
 
 	go func() {
