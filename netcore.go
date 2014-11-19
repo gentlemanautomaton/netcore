@@ -13,11 +13,11 @@ func main() {
 	fmt.Println("NETCORE Started.")
 
 	select {
-	case <-dhcpExit:
-		fmt.Println("DHCP Exited")
+	case err := <-dhcpExit:
+		fmt.Printf("DHCP Exited: %s\n", err)
 		os.Exit(1)
-	case <-dnsExit:
-		fmt.Println("DNS Exited")
+	case err := <-dnsExit:
+		fmt.Printf("DNS Exited: %s\n", err)
 		os.Exit(1)
 	}
 }

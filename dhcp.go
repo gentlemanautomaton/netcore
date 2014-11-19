@@ -19,26 +19,25 @@ type DHCPService struct {
 	etcdClient        *etcd.Client
 }
 
-func dhcpSetup(etc *etcd.Client) chan bool {
+func dhcpSetup(etc *etcd.Client) chan error {
 	etc.CreateDir("dhcp", 0)
-	exit := make(chan bool, 1)
-	serverIP := net.ParseIP("172.16.193.1")
-	_, authoritativePool, _ := net.ParseCIDR("172.16.193.0/24")
+	exit := make(chan error, 1)
+	serverIP := net.ParseIP("192.168.30.1")
+	_, authoritativePool, _ := net.ParseCIDR("192.168.30.0/24")
 	guestPool := authoritativePool
 	go func() {
-		fmt.Println(dhcp4.ListenAndServeIf("vmnet2", &DHCPService{
+		exit <- dhcp4.ListenAndServeIf("vmnet2", &DHCPService{
 			ip:                serverIP.To4(),
 			leaseDuration:     time.Hour * 12,
 			etcdClient:        etc,
 			authoritativePool: authoritativePool,
 			guestPool:         guestPool,
 			defaultOptions: dhcp4.Options{
-				dhcp4.OptionSubnetMask:       net.ParseIP("255.255.255.0").To4(),
-				dhcp4.OptionRouter:           serverIP.To4(),
+				dhcp4.OptionSubnetMask:       net.ParseIP("255.255.255.0").To4(), // FIXME: derive this from the authoritativePool?
+				dhcp4.OptionRouter:           dhcp4.IPAdd(serverIP, 1).To4(),
 				dhcp4.OptionDomainNameServer: serverIP.To4(),
 			},
-		}))
-		exit <- true
+		})
 	}()
 	return exit
 }
@@ -54,12 +53,12 @@ func (d *DHCPService) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, 
 		if ip != nil {
 			options := d.getOptionsFromMAC(mac)
 			fmt.Printf("DHCP Discover from %s (we return %s)\n", mac.String(), ip.String())
-			for x, y := range reqOptions {
-				fmt.Printf("\tR[%v] %v %s\n", x, y, y)
-			}
-			for x, y := range options {
-				fmt.Printf("\tO[%v] %v %s\n", x, y, y)
-			}
+			// for x, y := range reqOptions {
+			// 	fmt.Printf("\tR[%v] %v %s\n", x, y, y)
+			// }
+			// for x, y := range options {
+			// 	fmt.Printf("\tO[%v] %v %s\n", x, y, y)
+			// }
 			return dhcp4.ReplyPacket(packet, dhcp4.Offer, d.ip.To4(), ip.To4(), d.leaseDuration, options.SelectOrderOrAll(reqOptions[dhcp4.OptionParameterRequestList]))
 		}
 		return nil
@@ -73,12 +72,12 @@ func (d *DHCPService) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, 
 			if ip.Equal(requestedIP) {
 				options := d.getOptionsFromMAC(mac)
 				fmt.Printf("DHCP Request from %s wanting %s (we agree)\n", mac.String(), requestedIP.String())
-				for x, y := range reqOptions {
-					fmt.Printf("\tR[%v] %v %s\n", x, y, y)
-				}
-				for x, y := range options {
-					fmt.Printf("\tO[%v] %v %s\n", x, y, y)
-				}
+				// for x, y := range reqOptions {
+				// 	fmt.Printf("\tR[%v] %v %s\n", x, y, y)
+				// }
+				// for x, y := range options {
+				// 	fmt.Printf("\tO[%v] %v %s\n", x, y, y)
+				// }
 				return dhcp4.ReplyPacket(packet, dhcp4.ACK, d.ip.To4(), requestedIP.To4(), d.leaseDuration, options.SelectOrderOrAll(reqOptions[dhcp4.OptionParameterRequestList]))
 			}
 		}
@@ -134,7 +133,12 @@ func (d *DHCPService) getIPFromMAC(mac net.HardwareAddr) net.IP {
 }
 
 func (d *DHCPService) getOptionsFromMAC(mac net.HardwareAddr) dhcp4.Options {
-	options := d.defaultOptions
+	options := dhcp4.Options{}
+
+	for i := range d.defaultOptions {
+		options[i] = d.defaultOptions[i]
+		fmt.Printf("OPTION:[%d][%+v]\n", i, d.defaultOptions[i])
+	}
 
 	{ // Subnet Mask
 		response, _ := d.etcdClient.Get("dhcp/"+mac.String()+"/mask", false, false)
