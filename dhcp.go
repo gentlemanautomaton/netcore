@@ -191,7 +191,7 @@ func (d *DHCPService) getOptionsFromMAC(mac net.HardwareAddr) dhcp4.Options {
 		}
 	}
 
-	{ // Domain Name
+	{ // Broadcast Address
 		response, _ := d.etcdClient.Get("dhcp/"+mac.String()+"/broadcast", false, false)
 		if response != nil && response.Node != nil {
 			if response.Node.Value == "" {
