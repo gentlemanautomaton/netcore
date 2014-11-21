@@ -6,8 +6,12 @@ import (
 	"github.com/coreos/go-etcd/etcd"
 )
 
-func etcdSetup() *etcd.Client {
-	etc := etcd.NewClient(nil)
+func etcdSetup(serverList string) *etcd.Client {
+	var servers []string
+	if serverList != "" {
+		servers = strings.Split(serverList, ",")
+	}
+	etc := etcd.NewClient(servers)
 	etc.SetConsistency("WEAK_CONSISTENCY")
 	return etc
 }

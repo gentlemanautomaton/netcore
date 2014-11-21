@@ -1,12 +1,19 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os"
 )
 
+var etcdServers = flag.String("etcd", "", "Comma-separated list of etcd servers.")
+
+func init() {
+	flag.Parse()
+}
+
 func main() {
-	etc := etcdSetup()
+	etc := etcdSetup(*etcdServers)
 
 	cfg, err := getConfig(etc)
 

@@ -41,8 +41,6 @@ var ErrNoGateway = errors.New("This zone does not have an assigned gateway.")
 func getConfig(etc *etcd.Client) (*Config, error) {
 	etc.CreateDir("config", 0)
 
-	flag.Parse()
-
 	cfg := new(Config)
 
 	// Hostname
