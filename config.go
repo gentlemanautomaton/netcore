@@ -5,6 +5,7 @@ import (
 	"flag"
 	"net"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -23,6 +24,7 @@ type Config struct {
 	dhcpNIC           string
 	dhcpSubnet        *net.IPNet
 	dhcpLeaseDuration time.Duration
+	dnsForwarders     []string
 }
 
 var setZone = flag.String("setZone", "", "Overwrite (permanently) the zone that this machine is in.")
@@ -181,6 +183,18 @@ func getConfig(etc *etcd.Client) (*Config, error) {
 		}
 	}
 
+	// DNSForwarders
+	{
+		cfg.dnsForwarders = []string{"8.8.8.8:53", "8.8.4.4:53"} // default uses Google's Public DNS servers
+		response, err := etc.Get("config/"+cfg.zone+"/dnsforwarders", false, false)
+		if err != nil && !etcdKeyNotFound(err) {
+			return nil, err
+		}
+		if response != nil && response.Node != nil && response.Node.Value != "" {
+			cfg.dnsForwarders = strings.Split(",", response.Node.Value)
+		}
+	}
+
 	return cfg, nil
 }
 
@@ -238,4 +252,11 @@ func (cfg *Config) DHCPLeaseDuration() time.Duration {
 	cfg.Lock()
 	defer cfg.Unlock()
 	return cfg.dhcpLeaseDuration
+}
+
+// DNSForwarders returns the list of DNS resolvers we use for recursive lookups
+func (cfg *Config) DNSForwarders() []string {
+	cfg.Lock()
+	defer cfg.Unlock()
+	return cfg.dnsForwarders
 }
