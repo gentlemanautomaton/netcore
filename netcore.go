@@ -7,8 +7,26 @@ import (
 
 func main() {
 	etc := etcdSetup()
-	dhcpExit := dhcpSetup(etc)
-	dnsExit := dnsSetup(etc)
+
+	cfg, err := getConfig(etc)
+
+	if err != nil {
+		fmt.Printf("Configuration failed: %s\n", err)
+		os.Exit(1)
+	}
+
+	var dhcpExit chan error
+	if cfg.DHCPIP() == nil {
+		fmt.Println("DHCP service is disabled; this machine does not have a DHCP IP assigned.")
+	} else if cfg.DHCPSubnet() == nil {
+		fmt.Println("DHCP service is disabled; this machine's zone does not have a DHCP subnet assigned.")
+	} else if cfg.DHCPNIC() == "" {
+		fmt.Println("DHCP service is disabled; this machine does not have a DHCP NIC assigned.")
+	} else {
+		dhcpExit = dhcpSetup(cfg, etc)
+	}
+
+	dnsExit := dnsSetup(cfg, etc)
 
 	fmt.Println("NETCORE Started.")
 

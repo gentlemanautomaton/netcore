@@ -7,7 +7,7 @@ import (
 	"github.com/miekg/dns"
 )
 
-func dnsSetup(etc *etcd.Client) chan error {
+func dnsSetup(cfg *Config, etc *etcd.Client) chan error {
 	dns.HandleFunc(".", proxyServe)
 	etc.CreateDir("dns", 0)
 	exit := make(chan error, 1)

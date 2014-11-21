@@ -11,31 +11,26 @@ import (
 
 // DHCPService is the DHCP server instance
 type DHCPService struct {
-	ip                net.IP
-	authoritativePool *net.IPNet    // FIXME: actually use this value for something
-	guestPool         *net.IPNet    // must be within authoritativePool (at least for now)
-	leaseDuration     time.Duration // FIXME: make a separate duration per pool?
-	defaultOptions    dhcp4.Options // FIXME: make different options per pool?
-	etcdClient        *etcd.Client
+	ip             net.IP
+	guestPool      *net.IPNet
+	leaseDuration  time.Duration
+	defaultOptions dhcp4.Options // FIXME: make different options per pool?
+	etcdClient     *etcd.Client
 }
 
-func dhcpSetup(etc *etcd.Client) chan error {
+func dhcpSetup(cfg *Config, etc *etcd.Client) chan error {
 	etc.CreateDir("dhcp", 0)
 	exit := make(chan error, 1)
-	serverIP := net.ParseIP("192.168.30.1")
-	_, authoritativePool, _ := net.ParseCIDR("192.168.30.0/24")
-	guestPool := authoritativePool
 	go func() {
-		exit <- dhcp4.ListenAndServeIf("vmnet2", &DHCPService{
-			ip:                serverIP.To4(),
-			leaseDuration:     time.Hour * 12,
-			etcdClient:        etc,
-			authoritativePool: authoritativePool,
-			guestPool:         guestPool,
+		exit <- dhcp4.ListenAndServeIf(cfg.DHCPNIC(), &DHCPService{
+			ip:            cfg.DHCPIP(),
+			leaseDuration: cfg.DHCPLeaseDuration(),
+			etcdClient:    etc,
+			guestPool:     cfg.DHCPSubnet(),
 			defaultOptions: dhcp4.Options{
-				dhcp4.OptionSubnetMask:       net.ParseIP("255.255.255.0").To4(), // FIXME: derive this from the authoritativePool?
-				dhcp4.OptionRouter:           dhcp4.IPAdd(serverIP, 1).To4(),
-				dhcp4.OptionDomainNameServer: serverIP.To4(),
+				dhcp4.OptionSubnetMask:       net.IP(cfg.Subnet().Mask),
+				dhcp4.OptionRouter:           cfg.Gateway(),
+				dhcp4.OptionDomainNameServer: cfg.DHCPIP(),
 			},
 		})
 	}()
