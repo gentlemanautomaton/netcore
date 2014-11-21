@@ -8,7 +8,7 @@ import (
 )
 
 func dnsSetup(cfg *Config, etc *etcd.Client) chan error {
-	dns.HandleFunc(".", proxyServe)
+	dns.HandleFunc(".", dnsQueryServe)
 	etc.CreateDir("dns", 0)
 	exit := make(chan error, 1)
 
@@ -23,7 +23,7 @@ func dnsSetup(cfg *Config, etc *etcd.Client) chan error {
 	return exit
 }
 
-func proxyServe(w dns.ResponseWriter, req *dns.Msg) {
+func dnsQueryServe(w dns.ResponseWriter, req *dns.Msg) {
 	q := req.Question[0]
 
 	if req.MsgHdr.Response == true { // supposed responses sent to us are bogus
