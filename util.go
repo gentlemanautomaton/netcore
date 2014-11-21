@@ -13,7 +13,7 @@ func getHostname() (string, error) {
 	return strings.TrimSpace(string(fqdn)), nil
 }
 
-func reverseStringSlice(in []string) []string {
+func reverseSlice(in []string) []string {
 	out := make([]string, len(in))
 	for i := range in {
 		out[len(in)-i-1] = in[i]
