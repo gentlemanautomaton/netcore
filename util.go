@@ -3,6 +3,8 @@ package main
 import (
 	"os/exec"
 	"strings"
+
+	"code.google.com/p/go-uuid/uuid"
 )
 
 func getHostname() (string, error) {
@@ -19,4 +21,8 @@ func reverseSlice(in []string) []string {
 		out[len(in)-i-1] = in[i]
 	}
 	return out
+}
+
+func getUUID() string {
+	return uuid.New()
 }
