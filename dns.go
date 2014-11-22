@@ -166,6 +166,15 @@ func dnsQueryServe(cfg *Config, etc *etcd.Client, w dns.ResponseWriter, req *dns
 						answer.Header().Class = dns.ClassINET
 						answer.Ptr = strings.TrimSuffix(child.Value, ".") + "."
 						answerMsg.Answer = append(answerMsg.Answer, answer)
+					case "MX":
+						// TODO: implement MX
+						//       http://godoc.org/github.com/miekg/dns#MX
+					case "SRV":
+						// TODO: implement SRV
+						//       http://godoc.org/github.com/miekg/dns#SRV
+					case "SSHFP":
+						// TODO: implement SSHFP
+						//       http://godoc.org/github.com/miekg/dns#SSHFP
 					}
 				}
 			}
