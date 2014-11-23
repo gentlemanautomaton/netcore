@@ -256,12 +256,12 @@ func dnsQueryServe(cfg *Config, etc *etcd.Client, w dns.ResponseWriter, req *dns
 		keyParts := strings.Split(key, "/")
 		for i := len(keyParts); i > 2; i-- {
 			parentKey := strings.Join(keyParts[0:i], "/")
-			fmt.Printf("PARENTKEY: [%s]\n", parentKey)
+			//fmt.Printf("PARENTKEY: [%s]\n", parentKey)
 			{ // test for an SOA (which tells us we have authority)
 				parentKey := parentKey + "/@soa"
 				response, err := etc.Get(strings.ToLower(parentKey), false, false) // do the lookup
 				if err == nil && response != nil && response.Node != nil {
-					fmt.Printf("PARENTKEY EXISTS\n")
+					//fmt.Printf("PARENTKEY EXISTS\n")
 					allowUseForwarder = false
 					break
 				}
@@ -270,7 +270,7 @@ func dnsQueryServe(cfg *Config, etc *etcd.Client, w dns.ResponseWriter, req *dns
 				parentKey := parentKey + "/@dname"
 				response, err := etc.Get(strings.ToLower(parentKey), false, false) // do the lookup
 				if err == nil && response != nil && response.Node != nil {
-					fmt.Printf("DNAME EXISTS!\n")
+					fmt.Printf("DNAME EXISTS!  WE NEED TO HANDLE THIS CORRECTLY... FIXME\n")
 					allowUseForwarder = false
 					// FIXME!  THIS NEEDS TO HANDLE DNAME ALIASING CORRECTLY INSTEAD OF IGNORING IT...
 					break
@@ -295,6 +295,8 @@ func dnsQueryServe(cfg *Config, etc *etcd.Client, w dns.ResponseWriter, req *dns
 					c.Net = "tcp"
 					m, _, err = c.Exchange(req, strings.TrimSpace(server))
 				}
+
+				// FIXME: Cache misses.  And cache hits, too.
 
 				if err != nil {
 					fmt.Println(err)
