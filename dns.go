@@ -230,6 +230,7 @@ func dnsQueryServe(cfg *Config, etc *etcd.Client, w dns.ResponseWriter, req *dns
 					case "SSHFP":
 						// TODO: implement SSHFP
 						//       http://godoc.org/github.com/miekg/dns#SSHFP
+						//       NOTE: we must implement DNSSEC before using this RR type
 					}
 				}
 			}
