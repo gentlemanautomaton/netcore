@@ -279,7 +279,7 @@ func dnsQueryServe(cfg *Config, etc *etcd.Client, w dns.ResponseWriter, req *dns
 		}
 	}
 
-	if allowUseForwarder { // XXX: just for devtime!
+	if allowUseForwarder {
 		forwarders := cfg.DNSForwarders()
 		if len(forwarders) == 0 {
 			// we have no upstreams, so we'll just not use any
