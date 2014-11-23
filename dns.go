@@ -240,7 +240,7 @@ func dnsQueryServe(cfg *Config, etc *etcd.Client, w dns.ResponseWriter, req *dns
 			for _, answer := range answerMsg.Answer {
 				answer.Header().Ttl = answerTTL
 			}
-			fmt.Printf("OUR DATA: [%+v]\n", answerMsg)
+			//fmt.Printf("OUR DATA: [%+v]\n", answerMsg)
 			w.WriteMsg(answerMsg)
 
 			// TODO: cache the response locally in RAM?
@@ -249,9 +249,37 @@ func dnsQueryServe(cfg *Config, etc *etcd.Client, w dns.ResponseWriter, req *dns
 		}
 	}
 
-	// TODO: check to see if we host this zone; if yes, return NXDOMAIN right now!
+	// check to see if we host this zone; if yes, don't allow use of ext forwarders
+	// ... also, check to see if we hit a DNAME so we can handle that aliasing
+	allowUseForwarder := true
+	{
+		keyParts := strings.Split(key, "/")
+		for i := len(keyParts); i > 2; i-- {
+			parentKey := strings.Join(keyParts[0:i], "/")
+			fmt.Printf("PARENTKEY: [%s]\n", parentKey)
+			{ // test for an SOA (which tells us we have authority)
+				parentKey := parentKey + "/@soa"
+				response, err := etc.Get(strings.ToLower(parentKey), false, false) // do the lookup
+				if err == nil && response != nil && response.Node != nil {
+					fmt.Printf("PARENTKEY EXISTS\n")
+					allowUseForwarder = false
+					break
+				}
+			}
+			{ // test for a DNAME which has special handling for aliasing of subdomains within
+				parentKey := parentKey + "/@dname"
+				response, err := etc.Get(strings.ToLower(parentKey), false, false) // do the lookup
+				if err == nil && response != nil && response.Node != nil {
+					fmt.Printf("DNAME EXISTS!\n")
+					allowUseForwarder = false
+					// FIXME!  THIS NEEDS TO HANDLE DNAME ALIASING CORRECTLY INSTEAD OF IGNORING IT...
+					break
+				}
+			}
+		}
+	}
 
-	if false { // XXX: just for devtime!
+	if allowUseForwarder { // XXX: just for devtime!
 		forwarders := cfg.DNSForwarders()
 		if len(forwarders) == 0 {
 			// we have no upstreams, so we'll just not use any
