@@ -191,11 +191,42 @@ func dnsQueryServe(cfg *Config, etc *etcd.Client, w dns.ResponseWriter, req *dns
 						} else if child.Value != "" { // allows for simplified setting
 							answer.Mx = strings.TrimSuffix(child.Value, ".") + "."
 						}
-						fmt.Printf("MX: [%+v]\n", answer)
+						// FIXME: are we supposed to be returning these in prio ordering?
+						//        ... or maybe it does that for us?  or maybe it's the enduser's problem?
 						answerMsg.Answer = append(answerMsg.Answer, answer)
 					case "SRV":
-						// TODO: implement SRV
-						//       http://godoc.org/github.com/miekg/dns#SRV
+						answer := new(dns.SRV)
+						answer.Header().Name = q.Name
+						answer.Header().Rrtype = dns.TypeSRV
+						answer.Header().Class = dns.ClassINET
+						answer.Priority = 50 // default if not defined
+						priority, err := strconv.Atoi(attr["PRIORITY"])
+						if err == nil {
+							answer.Priority = uint16(priority)
+						}
+						answer.Weight = 50 // default if not defined
+						weight, err := strconv.Atoi(attr["WEIGHT"])
+						if err == nil {
+							answer.Weight = uint16(weight)
+						}
+						answer.Port = 50 // default if not defined
+						port, err := strconv.Atoi(attr["PORT"])
+						if err == nil {
+							answer.Port = uint16(port)
+						}
+						if target, ok := attr["TARGET"]; ok {
+							answer.Target = strings.TrimSuffix(target, ".") + "."
+						} else if child.Value != "" { // allows for simplified setting
+							targetParts := strings.Split(child.Value, ":")
+							answer.Target = strings.TrimSuffix(targetParts[0], ".") + "."
+							port, err := strconv.Atoi(targetParts[1])
+							if err == nil {
+								answer.Port = uint16(port)
+							}
+						}
+						// FIXME: are we supposed to be returning these rando-weighted and in priority ordering?
+						//        ... or maybe it does that for us?  or maybe it's the enduser's problem?
+						answerMsg.Answer = append(answerMsg.Answer, answer)
 					case "SSHFP":
 						// TODO: implement SSHFP
 						//       http://godoc.org/github.com/miekg/dns#SSHFP
