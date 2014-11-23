@@ -63,7 +63,7 @@ func dnsQueryServe(cfg *Config, etc *etcd.Client, w dns.ResponseWriter, req *dns
 		answerMsg.Question = req.Question
 		answerMsg.Rcode = dns.RcodeSuccess
 		answerMsg.Extra = []dns.RR{}
-		answerTTL := uint32(3600)
+		answerTTL := uint32(10800) // this is the default TTL = 3 hours
 		gotTTL, _ := strconv.Atoi(meta["TTL"])
 		if gotTTL > 0 {
 			answerTTL = uint32(gotTTL)
@@ -94,6 +94,16 @@ func dnsQueryServe(cfg *Config, etc *etcd.Client, w dns.ResponseWriter, req *dns
 					if child.TTL > 0 && uint32(child.TTL) < answerTTL {
 						answerTTL = uint32(child.TTL)
 					}
+
+					// this builds the attributes for complex types, like MX and SRV
+					attr := make(map[string]string)
+					if child.Nodes != nil {
+						for _, attrNode := range child.Nodes {
+							nodeKey := strings.Replace(attrNode.Key, child.Key+"/", "", 1)
+							attr[nodeKey] = attrNode.Value
+						}
+					}
+
 					switch qType {
 					// FIXME: Add more RR types!
 					//        http://godoc.org/github.com/miekg/dns has info as well as
@@ -167,8 +177,22 @@ func dnsQueryServe(cfg *Config, etc *etcd.Client, w dns.ResponseWriter, req *dns
 						answer.Ptr = strings.TrimSuffix(child.Value, ".") + "."
 						answerMsg.Answer = append(answerMsg.Answer, answer)
 					case "MX":
-						// TODO: implement MX
-						//       http://godoc.org/github.com/miekg/dns#MX
+						answer := new(dns.MX)
+						answer.Header().Name = q.Name
+						answer.Header().Rrtype = dns.TypeMX
+						answer.Header().Class = dns.ClassINET
+						answer.Preference = 50 // default if not defined
+						priority, err := strconv.Atoi(attr["PRIORITY"])
+						if err == nil {
+							answer.Preference = uint16(priority)
+						}
+						if target, ok := attr["TARGET"]; ok {
+							answer.Mx = strings.TrimSuffix(target, ".") + "."
+						} else if child.Value != "" { // allows for simplified setting
+							answer.Mx = strings.TrimSuffix(child.Value, ".") + "."
+						}
+						fmt.Printf("MX: [%+v]\n", answer)
+						answerMsg.Answer = append(answerMsg.Answer, answer)
 					case "SRV":
 						// TODO: implement SRV
 						//       http://godoc.org/github.com/miekg/dns#SRV
@@ -184,6 +208,7 @@ func dnsQueryServe(cfg *Config, etc *etcd.Client, w dns.ResponseWriter, req *dns
 			for _, answer := range answerMsg.Answer {
 				answer.Header().Ttl = answerTTL
 			}
+			fmt.Printf("OUR DATA: [%+v]\n", answerMsg)
 			w.WriteMsg(answerMsg)
 
 			// TODO: cache the response locally in RAM?
