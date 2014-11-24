@@ -212,7 +212,7 @@ func dnsQueryServe(cfg *Config, etc *etcd.Client, w dns.ResponseWriter, req *dns
 						if err == nil {
 							answer.Weight = uint16(weight)
 						}
-						answer.Port = 50 // default if not defined
+						answer.Port = 0 // default if not defined
 						port, err := strconv.Atoi(attr["PORT"])
 						if err == nil {
 							answer.Port = uint16(port)
@@ -222,9 +222,11 @@ func dnsQueryServe(cfg *Config, etc *etcd.Client, w dns.ResponseWriter, req *dns
 						} else if child.Value != "" { // allows for simplified setting
 							targetParts := strings.Split(child.Value, ":")
 							answer.Target = strings.TrimSuffix(targetParts[0], ".") + "."
-							port, err := strconv.Atoi(targetParts[1])
-							if err == nil {
-								answer.Port = uint16(port)
+							if len(targetParts) > 1 {
+								port, err := strconv.Atoi(targetParts[1])
+								if err == nil {
+									answer.Port = uint16(port)
+								}
 							}
 						}
 						// FIXME: are we supposed to be returning these rando-weighted and in priority ordering?
