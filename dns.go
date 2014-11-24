@@ -39,6 +39,9 @@ func dnsQueryServe(cfg *Config, etc *etcd.Client, w dns.ResponseWriter, req *dns
 
 	// TODO: lookup in an in-memory cache (obeying TTLs!)
 
+	// TODO: handle AXFR/IXFR (full and incremental) *someday* for use by non-netcore slaves
+	//       ... also if we do that, also handle sending NOTIFY to listed slaves attached to the SOA record
+
 	qType := dns.Type(q.Qtype).String()                              // query type
 	pathParts := strings.Split(strings.TrimSuffix(q.Name, "."), ".") // breakup the queryed name
 	queryPath := strings.Join(reverseSlice(pathParts), "/")          // reverse and join them with a slash delimiter
