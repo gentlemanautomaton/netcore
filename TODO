@@ -1,0 +1,2 @@
+* Add MDNS support
+  - Example use case: to advertise a Digium phone registration module for Asterisk in multiple offices.
