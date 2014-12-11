@@ -18,6 +18,7 @@ type Config struct {
 	etcdClient        *etcd.Client
 	hostname          string
 	zone              string
+	domain            string
 	subnet            *net.IPNet
 	gateway           net.IP
 	dhcpIP            net.IP
@@ -70,6 +71,17 @@ func getConfig(etc *etcd.Client) (*Config, error) {
 			return nil, ErrNoZone
 		}
 		cfg.zone = response.Node.Value
+	}
+
+	// Domain
+	{
+		response, err := etc.Get("config/"+cfg.zone+"/domain", false, false)
+		if err != nil && !etcdKeyNotFound(err) {
+			return nil, err
+		}
+		if response != nil && response.Node != nil && response.Node.Value != "" {
+			cfg.domain = response.Node.Value
+		}
 	}
 
 	// Subnet
@@ -210,6 +222,13 @@ func (cfg *Config) Zone() string {
 	cfg.Lock()
 	defer cfg.Unlock()
 	return cfg.zone
+}
+
+// Domain returns the default domain for this zone
+func (cfg *Config) Domain() string {
+	cfg.Lock()
+	defer cfg.Unlock()
+	return cfg.domain
 }
 
 // Subnet returns the subnet for this zone

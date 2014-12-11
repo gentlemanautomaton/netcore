@@ -14,6 +14,7 @@ import (
 // DHCPService is the DHCP server instance
 type DHCPService struct {
 	ip             net.IP
+	domain         string
 	guestPool      *net.IPNet
 	leaseDuration  time.Duration
 	defaultOptions dhcp4.Options // FIXME: make different options per pool?
@@ -29,6 +30,7 @@ func dhcpSetup(cfg *Config, etc *etcd.Client) chan error {
 			leaseDuration: cfg.DHCPLeaseDuration(),
 			etcdClient:    etc,
 			guestPool:     cfg.DHCPSubnet(),
+			domain:        cfg.Domain(),
 			defaultOptions: dhcp4.Options{
 				dhcp4.OptionSubnetMask:       net.IP(cfg.Subnet().Mask),
 				dhcp4.OptionRouter:           cfg.Gateway(),
@@ -218,10 +220,15 @@ func (d *DHCPService) getOptionsFromMAC(mac net.HardwareAddr) dhcp4.Options {
 	{ // Domain Name
 		response, _ := d.etcdClient.Get("dhcp/"+mac.String()+"/domain", false, false)
 		if response != nil && response.Node != nil {
-			if response.Node.Value == "" {
-				delete(options, dhcp4.OptionDomainName)
-			} else {
+			if response.Node.Value != "" {
 				options[dhcp4.OptionDomainName] = []byte(response.Node.Value)
+			}
+		}
+		if len(options[dhcp4.OptionDomainName]) == 0 {
+			if d.domain != "" {
+				options[dhcp4.OptionDomainName] = []byte(d.domain)
+			} else {
+				delete(options, dhcp4.OptionDomainName)
 			}
 		}
 	}
