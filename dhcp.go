@@ -85,6 +85,12 @@ func (d *DHCPService) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, 
 		// FIXME: release from DB?  tick a flag?  increment a counter?  send to StatHat?
 		mac := packet.CHAddr()
 		fmt.Printf("DHCP Decline from %s\n", mac.String())
+	case dhcp4.Inform:
+		// FIXME: release from DB?  tick a flag?  increment a counter?  send to StatHat?
+		// FIXME: we should reply with valuable info, but not assign an IP to this client, per RFC 2131 for DHCPINFORM
+		// NOTE: the client's IP is supposed to only be in the ciaddr field, not the requested IP field, per RFC 2131 4.4.3
+		mac := packet.CHAddr()
+		fmt.Printf("DHCP Inform from %s\n", mac.String())
 	}
 	return nil
 }
@@ -95,6 +101,7 @@ func (d *DHCPService) getIPFromMAC(mac net.HardwareAddr) net.IP {
 		ip := net.ParseIP(response.Node.Value)
 		if ip != nil {
 			d.etcdClient.Set("dhcp/"+ip.String(), mac.String(), uint64(d.leaseDuration.Seconds()+0.5))
+			d.etcdClient.Set("dhcp/"+mac.String()+"/ip", ip.String(), uint64(d.leaseDuration.Seconds()+0.5))
 			return ip
 		}
 	}
