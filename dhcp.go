@@ -146,12 +146,15 @@ func (d *DHCPService) maintainDNSRecords(mac net.HardwareAddr, ip net.IP, packet
 			name = string(val)
 		}
 		if name != "" {
-			name = strings.ToLower(name)
-			ipHash := fmt.Sprintf("%x", sha1.Sum([]byte(ip.String())))                                // hash the IP address so we can have a unique key name (no other reason for this, honestly)
-			pathParts := strings.Split(strings.TrimSuffix(strings.ToLower(string(domain)), "."), ".") // breakup the name
-			queryPath := strings.Join(reverseSlice(pathParts), "/")                                   // reverse and join them with a slash delimiter
+			host := strings.ToLower(strings.Join([]string{name, string(domain)}, "."))
+			ipHash := fmt.Sprintf("%x", sha1.Sum([]byte(ip.String())))     // hash the IP address so we can have a unique key name (no other reason for this, honestly)
+			pathParts := strings.Split(strings.TrimSuffix(host, "."), ".") // breakup the name
+			queryPath := strings.Join(reverseSlice(pathParts), "/")        // reverse and join them with a slash delimiter
 			fmt.Printf("Wanting to register against %s/%s\n", queryPath, name)
-			d.etcdClient.Set("dns/"+queryPath+"/"+name+"/@a/val/"+ipHash, ip.String(), uint64(d.leaseDuration.Seconds()+0.5))
+			d.etcdClient.Set("dns/"+queryPath+"/@a/val/"+ipHash, ip.String(), uint64(d.leaseDuration.Seconds()+0.5))
+			hostHash := fmt.Sprintf("%x", sha1.Sum([]byte(host))) // hash the hostname so we can have a unique key name (no other reason for this, honestly)
+			slashedIP := strings.Replace(ip.To4().String(), ".", "/", -1)
+			d.etcdClient.Set("dns/arpa/in-addr/"+slashedIP+"/@ptr/val/"+hostHash, host, uint64(d.leaseDuration.Seconds()+0.5))
 		} else {
 			fmt.Println(">> No host name")
 		}
