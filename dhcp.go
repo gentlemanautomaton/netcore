@@ -1,8 +1,10 @@
 package main
 
 import (
+	"crypto/sha1"
 	"fmt"
 	"net"
+	"strings"
 	"time"
 
 	"github.com/coreos/go-etcd/etcd"
@@ -44,7 +46,7 @@ func (d *DHCPService) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, 
 		// FIXME: send to StatHat and/or increment a counter
 		mac := packet.CHAddr()
 		fmt.Printf("DHCP Discover from %s\n", mac.String())
-		ip := d.getIPFromMAC(mac)
+		ip := d.getIPFromMAC(mac, packet, reqOptions)
 		if ip != nil {
 			options := d.getOptionsFromMAC(mac)
 			fmt.Printf("DHCP Discover from %s (we return %s)\n", mac.String(), ip.String())
@@ -63,7 +65,7 @@ func (d *DHCPService) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, 
 		fmt.Printf("DHCP Request from %s...\n", mac.String())
 		if requestedIP := net.IP(reqOptions[dhcp4.OptionRequestedIPAddress]); len(requestedIP) == 4 { // valid and IPv4
 			fmt.Printf("DHCP Request from %s wanting %s\n", mac.String(), requestedIP.String())
-			ip := d.getIPFromMAC(mac)
+			ip := d.getIPFromMAC(mac, packet, reqOptions)
 			if ip.Equal(requestedIP) {
 				options := d.getOptionsFromMAC(mac)
 				fmt.Printf("DHCP Request from %s wanting %s (we agree)\n", mac.String(), requestedIP.String())
@@ -95,7 +97,7 @@ func (d *DHCPService) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, 
 	return nil
 }
 
-func (d *DHCPService) getIPFromMAC(mac net.HardwareAddr) net.IP {
+func (d *DHCPService) getIPFromMAC(mac net.HardwareAddr, packet dhcp4.Packet, reqOptions dhcp4.Options) net.IP {
 	response, _ := d.etcdClient.Get("dhcp/"+mac.String()+"/ip", false, false)
 	if response != nil && response.Node != nil {
 		ip := net.ParseIP(response.Node.Value)
@@ -121,8 +123,32 @@ func (d *DHCPService) getIPFromMAC(mac net.HardwareAddr) net.IP {
 
 	if ip != nil { // if nil then we're out of IP addresses!
 		d.etcdClient.CreateDir("dhcp/"+mac.String(), 0)
-		d.etcdClient.Set("dhcp/"+ip.String(), mac.String(), uint64(d.leaseDuration.Seconds()+0.5))
 		d.etcdClient.Set("dhcp/"+mac.String()+"/ip", ip.String(), uint64(d.leaseDuration.Seconds()+0.5))
+		d.etcdClient.Set("dhcp/"+ip.String(), mac.String(), uint64(d.leaseDuration.Seconds()+0.5))
+
+		options := d.getOptionsFromMAC(mac)
+		if domain, ok := options[dhcp4.OptionDomainName]; ok {
+			// FIXME:  danger!  we're mixing systems here...  if we keep this up, we will have spaghetti!
+			name := ""
+			if val, ok := options[dhcp4.OptionHostName]; ok {
+				name = string(val)
+			} else if val, ok := reqOptions[dhcp4.OptionHostName]; ok {
+				name = string(val)
+			}
+			if name != "" {
+				name = strings.ToLower(name)
+				ipHash := fmt.Sprintf("%x", sha1.Sum([]byte(ip.String())))                                // hash the IP address so we can have a unique key name (no other reason for this, honestly)
+				pathParts := strings.Split(strings.TrimSuffix(strings.ToLower(string(domain)), "."), ".") // breakup the name
+				queryPath := strings.Join(reverseSlice(pathParts), "/")                                   // reverse and join them with a slash delimiter
+				fmt.Printf("Wanting to register against %s/%s\n", queryPath, name)
+				d.etcdClient.Set("dns/"+queryPath+"/"+name+"/@a/val/"+ipHash, ip.String(), uint64(d.leaseDuration.Seconds()+0.5))
+			} else {
+				fmt.Println(">> No host name")
+			}
+		} else {
+			fmt.Println(">> No domain name")
+		}
+
 		return ip
 	}
 
