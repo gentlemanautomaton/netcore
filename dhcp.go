@@ -104,6 +104,7 @@ func (d *DHCPService) getIPFromMAC(mac net.HardwareAddr, packet dhcp4.Packet, re
 		if ip != nil {
 			d.etcdClient.Set("dhcp/"+ip.String(), mac.String(), uint64(d.leaseDuration.Seconds()+0.5))
 			d.etcdClient.Set("dhcp/"+mac.String()+"/ip", ip.String(), uint64(d.leaseDuration.Seconds()+0.5))
+			d.maintainDNSRecords(mac, ip, packet, reqOptions)
 			return ip
 		}
 	}
@@ -126,33 +127,37 @@ func (d *DHCPService) getIPFromMAC(mac net.HardwareAddr, packet dhcp4.Packet, re
 		d.etcdClient.Set("dhcp/"+mac.String()+"/ip", ip.String(), uint64(d.leaseDuration.Seconds()+0.5))
 		d.etcdClient.Set("dhcp/"+ip.String(), mac.String(), uint64(d.leaseDuration.Seconds()+0.5))
 
-		options := d.getOptionsFromMAC(mac)
-		if domain, ok := options[dhcp4.OptionDomainName]; ok {
-			// FIXME:  danger!  we're mixing systems here...  if we keep this up, we will have spaghetti!
-			name := ""
-			if val, ok := options[dhcp4.OptionHostName]; ok {
-				name = string(val)
-			} else if val, ok := reqOptions[dhcp4.OptionHostName]; ok {
-				name = string(val)
-			}
-			if name != "" {
-				name = strings.ToLower(name)
-				ipHash := fmt.Sprintf("%x", sha1.Sum([]byte(ip.String())))                                // hash the IP address so we can have a unique key name (no other reason for this, honestly)
-				pathParts := strings.Split(strings.TrimSuffix(strings.ToLower(string(domain)), "."), ".") // breakup the name
-				queryPath := strings.Join(reverseSlice(pathParts), "/")                                   // reverse and join them with a slash delimiter
-				fmt.Printf("Wanting to register against %s/%s\n", queryPath, name)
-				d.etcdClient.Set("dns/"+queryPath+"/"+name+"/@a/val/"+ipHash, ip.String(), uint64(d.leaseDuration.Seconds()+0.5))
-			} else {
-				fmt.Println(">> No host name")
-			}
-		} else {
-			fmt.Println(">> No domain name")
-		}
+		d.maintainDNSRecords(mac, ip, packet, reqOptions)
 
 		return ip
 	}
 
 	return nil
+}
+
+func (d *DHCPService) maintainDNSRecords(mac net.HardwareAddr, ip net.IP, packet dhcp4.Packet, reqOptions dhcp4.Options) {
+	options := d.getOptionsFromMAC(mac)
+	if domain, ok := options[dhcp4.OptionDomainName]; ok {
+		// FIXME:  danger!  we're mixing systems here...  if we keep this up, we will have spaghetti!
+		name := ""
+		if val, ok := options[dhcp4.OptionHostName]; ok {
+			name = string(val)
+		} else if val, ok := reqOptions[dhcp4.OptionHostName]; ok {
+			name = string(val)
+		}
+		if name != "" {
+			name = strings.ToLower(name)
+			ipHash := fmt.Sprintf("%x", sha1.Sum([]byte(ip.String())))                                // hash the IP address so we can have a unique key name (no other reason for this, honestly)
+			pathParts := strings.Split(strings.TrimSuffix(strings.ToLower(string(domain)), "."), ".") // breakup the name
+			queryPath := strings.Join(reverseSlice(pathParts), "/")                                   // reverse and join them with a slash delimiter
+			fmt.Printf("Wanting to register against %s/%s\n", queryPath, name)
+			d.etcdClient.Set("dns/"+queryPath+"/"+name+"/@a/val/"+ipHash, ip.String(), uint64(d.leaseDuration.Seconds()+0.5))
+		} else {
+			fmt.Println(">> No host name")
+		}
+	} else {
+		fmt.Println(">> No domain name")
+	}
 }
 
 func (d *DHCPService) getOptionsFromMAC(mac net.HardwareAddr) dhcp4.Options {
