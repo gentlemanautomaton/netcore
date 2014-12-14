@@ -57,7 +57,7 @@ func dnsQueryServe(cfg *Config, etc *etcd.Client, w dns.ResponseWriter, req *dns
 recordLookup:
 	{
 		qType := dns.Type(q.Qtype).String() // query type
-		fmt.Printf("[Lookup [%s] [%s]]\n", q.Name, qType)
+		//fmt.Printf("[Lookup [%s] [%s]]\n", q.Name, qType)
 		pathParts := strings.Split(strings.TrimSuffix(q.Name, "."), ".") // breakup the queryed name
 		queryPath := strings.Join(reverseSlice(pathParts), "/")          // reverse and join them with a slash delimiter
 		keyRoot := strings.ToLower("/dns/" + queryPath)
@@ -67,16 +67,16 @@ recordLookup:
 		response, err := etc.Get(strings.ToLower(key), true, true) // do the lookup
 		if err == nil && response != nil && response.Node != nil && len(response.Node.Nodes) > 0 {
 			qType = "CNAME"
-			fmt.Printf("[Lookup [%s] [%s] (altered)]\n", q.Name, qType)
+			//fmt.Printf("[Lookup [%s] [%s] (altered)]\n", q.Name, qType)
 		} else {
 			// lookup the requested RR type
-			fmt.Printf("[Lookup [%s] [%s] (normal lookup)]\n", q.Name, qType)
+			//fmt.Printf("[Lookup [%s] [%s] (normal lookup)]\n", q.Name, qType)
 			key = keyRoot + "/@" + qType                              // structure the lookup key
 			response, err = etc.Get(strings.ToLower(key), true, true) // do the lookup
 		}
 
 		if err == nil && response != nil && response.Node != nil && len(response.Node.Nodes) > 0 {
-			fmt.Printf("[Lookup [%s] [%s] (matched something)]\n", q.Name, qType)
+			//fmt.Printf("[Lookup [%s] [%s] (matched something)]\n", q.Name, qType)
 			var vals *etcd.Node
 			meta := make(map[string]string)
 			for _, node := range response.Node.Nodes {
@@ -297,8 +297,8 @@ recordLookup:
 	}
 
 	if allowUseForwarder {
-		qType := dns.Type(q.Qtype).String() // query type
-		fmt.Printf("[Forwarder Lookup [%s] [%s]]\n", q.Name, qType)
+		//qType := dns.Type(q.Qtype).String() // query type
+		//fmt.Printf("[Forwarder Lookup [%s] [%s]]\n", q.Name, qType)
 
 		myReq := new(dns.Msg)
 		myReq.SetQuestion(q.Name, q.Qtype)
@@ -322,10 +322,10 @@ recordLookup:
 				// FIXME: Cache misses.  And cache hits, too.
 
 				if err != nil {
-					fmt.Printf("[Forwarder Lookup [%s] [%s] failed: [%s]]\n", q.Name, qType, err)
+					//fmt.Printf("[Forwarder Lookup [%s] [%s] failed: [%s]]\n", q.Name, qType, err)
 					fmt.Println(err)
 				} else {
-					fmt.Printf("[Forwarder Lookup [%s] [%s] success]\n", q.Name, qType)
+					//fmt.Printf("[Forwarder Lookup [%s] [%s] success]\n", q.Name, qType)
 					for _, answer := range m.Answer {
 						answerMsg.Answer = append(answerMsg.Answer, answer)
 					}
