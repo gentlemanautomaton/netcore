@@ -27,6 +27,9 @@ func dnsSetup(cfg *Config, etc *etcd.Client) chan error {
 	return exit
 }
 
+// FIXME: I'm not particularly satisfied with how this file is operating.  It feels too monolithic instead
+//        of being broken out into neat little chunks as one would have expected.  Shouldn't stay this way.
+
 func dnsQueryServe(cfg *Config, etc *etcd.Client, w dns.ResponseWriter, req *dns.Msg) {
 	q := req.Question[0]
 
@@ -52,10 +55,12 @@ func dnsQueryServe(cfg *Config, etc *etcd.Client, w dns.ResponseWriter, req *dns
 	answerTTL := uint32(10800) // this is the default TTL = 3 hours
 
 	var key string
-	wouldLikeForwarder := true
+	var wouldLikeForwarder bool
 
 recordLookup:
 	{
+		wouldLikeForwarder = true
+
 		qType := dns.Type(q.Qtype).String() // query type
 		//fmt.Printf("[Lookup [%s] [%s]]\n", q.Name, qType)
 		pathParts := strings.Split(strings.TrimSuffix(q.Name, "."), ".") // breakup the queryed name
@@ -63,20 +68,21 @@ recordLookup:
 		keyRoot := strings.ToLower("/dns/" + queryPath)
 
 		// lookup CNAME
-		key = keyRoot + "/@cname"                                  // structure the lookup key
-		response, err := etc.Get(strings.ToLower(key), true, true) // do the lookup
+		key = keyRoot + "/@cname"                 // structure the lookup key
+		response, err := etc.Get(key, true, true) // do the lookup
 		if err == nil && response != nil && response.Node != nil && len(response.Node.Nodes) > 0 {
 			qType = "CNAME"
 			//fmt.Printf("[Lookup [%s] [%s] (altered)]\n", q.Name, qType)
 		} else {
 			// lookup the requested RR type
-			//fmt.Printf("[Lookup [%s] [%s] (normal lookup)]\n", q.Name, qType)
-			key = keyRoot + "/@" + qType                              // structure the lookup key
-			response, err = etc.Get(strings.ToLower(key), true, true) // do the lookup
+			key = keyRoot + "/@" + strings.ToLower(qType) // structure the lookup key
+			response, err = etc.Get(key, true, true)      // do the lookup
+			//fmt.Printf("[Lookup [%s] [%s] (normal lookup) %s]\n", q.Name, qType, key)
 		}
 
 		if err == nil && response != nil && response.Node != nil && len(response.Node.Nodes) > 0 {
 			//fmt.Printf("[Lookup [%s] [%s] (matched something)]\n", q.Name, qType)
+			wouldLikeForwarder = false
 			var vals *etcd.Node
 			meta := make(map[string]string)
 			for _, node := range response.Node.Nodes {
@@ -108,19 +114,17 @@ recordLookup:
 				answer.Expire = uint32(60)  // only used for master->slave timing
 				answer.Minttl = uint32(60)  // how long caching resolvers should cache a miss (NXDOMAIN status)
 				answerMsg.Answer = append(answerMsg.Answer, answer)
-				wouldLikeForwarder = false
 			default:
 				// ... for answers that have values
 				if vals != nil && vals.Nodes != nil {
 					for _, child := range vals.Nodes {
 						if child.Expiration != nil && child.Expiration.Unix() < time.Now().Unix() {
+							//fmt.Printf("[Lookup [%s] [%s] (is expired)]\n", q.Name, qType)
 							continue
 						}
 						if child.TTL > 0 && uint32(child.TTL) < answerTTL {
 							answerTTL = uint32(child.TTL)
 						}
-
-						// this builds the attributes for complex types, like MX and SRV
 						attr := make(map[string]string)
 						if child.Nodes != nil {
 							for _, attrNode := range child.Nodes {
@@ -140,7 +144,6 @@ recordLookup:
 							answer.Header().Class = dns.ClassINET
 							answer.Txt = []string{child.Value}
 							answerMsg.Answer = append(answerMsg.Answer, answer)
-							wouldLikeForwarder = false
 						case "A":
 							answer := new(dns.A)
 							answer.Header().Name = q.Name
@@ -148,7 +151,6 @@ recordLookup:
 							answer.Header().Class = dns.ClassINET
 							answer.A = net.ParseIP(child.Value)
 							answerMsg.Answer = append(answerMsg.Answer, answer)
-							wouldLikeForwarder = false
 						case "AAAA":
 							answer := new(dns.AAAA)
 							answer.Header().Name = q.Name
@@ -156,7 +158,6 @@ recordLookup:
 							answer.Header().Class = dns.ClassINET
 							answer.AAAA = net.ParseIP(child.Value)
 							answerMsg.Answer = append(answerMsg.Answer, answer)
-							wouldLikeForwarder = false
 						case "NS":
 							answer := new(dns.NS)
 							answer.Header().Name = q.Name
@@ -164,7 +165,6 @@ recordLookup:
 							answer.Header().Class = dns.ClassINET
 							answer.Ns = strings.TrimSuffix(child.Value, ".") + "."
 							answerMsg.Answer = append(answerMsg.Answer, answer)
-							wouldLikeForwarder = false
 						case "CNAME":
 							// Info: http://en.wikipedia.org/wiki/CNAME_record
 							answer := new(dns.CNAME)
@@ -198,7 +198,6 @@ recordLookup:
 							answer.Header().Class = dns.ClassINET
 							answer.Ptr = strings.TrimSuffix(child.Value, ".") + "."
 							answerMsg.Answer = append(answerMsg.Answer, answer)
-							wouldLikeForwarder = false
 						case "MX":
 							answer := new(dns.MX)
 							answer.Header().Name = q.Name
@@ -217,7 +216,6 @@ recordLookup:
 							// FIXME: are we supposed to be returning these in prio ordering?
 							//        ... or maybe it does that for us?  or maybe it's the enduser's problem?
 							answerMsg.Answer = append(answerMsg.Answer, answer)
-							wouldLikeForwarder = false
 						case "SRV":
 							answer := new(dns.SRV)
 							answer.Header().Name = q.Name
@@ -253,12 +251,10 @@ recordLookup:
 							// FIXME: are we supposed to be returning these rando-weighted and in priority ordering?
 							//        ... or maybe it does that for us?  or maybe it's the enduser's problem?
 							answerMsg.Answer = append(answerMsg.Answer, answer)
-							wouldLikeForwarder = false
 						case "SSHFP":
 							// TODO: implement SSHFP
 							//       http://godoc.org/github.com/miekg/dns#SSHFP
 							//       NOTE: we must implement DNSSEC before using this RR type
-							wouldLikeForwarder = false
 						}
 					}
 				}
@@ -266,29 +262,33 @@ recordLookup:
 		}
 	}
 
+	for _, answer := range answerMsg.Answer {
+		answer.Header().Ttl = answerTTL // FIXME: I think this might be inappropriate
+	}
+
 	// check to see if we host this zone; if yes, don't allow use of ext forwarders
 	// ... also, check to see if we hit a DNAME so we can handle that aliasing
-	allowUseForwarder := true && wouldLikeForwarder
 	{
 		keyParts := strings.Split(key, "/")
-		for i := len(keyParts); i > 2; i-- {
+		for i := len(keyParts) - 1; wouldLikeForwarder && i > 2; i-- {
 			parentKey := strings.Join(keyParts[0:i], "/")
-			//fmt.Printf("PARENTKEY: [%s]\n", parentKey)
 			{ // test for an SOA (which tells us we have authority)
 				parentKey := parentKey + "/@soa"
+				//fmt.Printf("PARENTKEY SOA: [%s]\n", parentKey)
 				response, err := etc.Get(strings.ToLower(parentKey), false, false) // do the lookup
 				if err == nil && response != nil && response.Node != nil {
-					//fmt.Printf("PARENTKEY EXISTS\n")
-					allowUseForwarder = false
+					//fmt.Printf("PARENTKEY SOA EXISTS\n")
+					wouldLikeForwarder = false
 					break
 				}
 			}
 			{ // test for a DNAME which has special handling for aliasing of subdomains within
 				parentKey := parentKey + "/@dname"
+				//fmt.Printf("PARENTKEY DNAME: [%s]\n", parentKey)
 				response, err := etc.Get(strings.ToLower(parentKey), false, false) // do the lookup
 				if err == nil && response != nil && response.Node != nil {
 					fmt.Printf("DNAME EXISTS!  WE NEED TO HANDLE THIS CORRECTLY... FIXME\n")
-					allowUseForwarder = false
+					wouldLikeForwarder = false
 					// FIXME!  THIS NEEDS TO HANDLE DNAME ALIASING CORRECTLY INSTEAD OF IGNORING IT...
 					break
 				}
@@ -296,7 +296,7 @@ recordLookup:
 		}
 	}
 
-	if allowUseForwarder {
+	if wouldLikeForwarder {
 		//qType := dns.Type(q.Qtype).String() // query type
 		//fmt.Printf("[Forwarder Lookup [%s] [%s]]\n", q.Name, qType)
 
@@ -336,9 +336,6 @@ recordLookup:
 	}
 
 	if len(answerMsg.Answer) > 0 {
-		for _, answer := range answerMsg.Answer {
-			answer.Header().Ttl = answerTTL
-		}
 		//fmt.Printf("OUR DATA: [%+v]\n", answerMsg)
 		w.WriteMsg(answerMsg)
 
@@ -346,6 +343,8 @@ recordLookup:
 
 		return
 	}
+
+	//fmt.Printf("NO DATA: [%+v]\n", answerMsg)
 
 	// if we got here, it means we didn't find what we were looking for.
 	failMsg := new(dns.Msg)
