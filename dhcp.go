@@ -65,13 +65,18 @@ func (d *DHCPService) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, 
 		// FIXME: send to StatHat and/or increment a counter
 		mac := packet.CHAddr()
 		fmt.Printf("DHCP Request from %s...\n", mac.String())
+		state := "NEW"
 		requestedIP := net.IP(reqOptions[dhcp4.OptionRequestedIPAddress])
+		if len(requestedIP) == 0 { // empty
+			state = "RENEWAL"
+			requestedIP = packet.CIAddr()
+		}
 		if len(requestedIP) == 4 { // valid and IPv4
-			fmt.Printf("DHCP Request from %s wanting %s\n", mac.String(), requestedIP.String())
+			fmt.Printf("DHCP Request (%s) from %s wanting %s\n", state, mac.String(), requestedIP.String())
 			ip := d.getIPFromMAC(mac, packet, reqOptions)
 			if ip.Equal(requestedIP) {
 				options := d.getOptionsFromMAC(mac)
-				fmt.Printf("DHCP Request from %s wanting %s (we agree)\n", mac.String(), requestedIP.String())
+				fmt.Printf("DHCP Request (%s) from %s wanting %s (we agree)\n", state, mac.String(), requestedIP.String())
 				// for x, y := range reqOptions {
 				// 	fmt.Printf("\tR[%v] %v %s\n", x, y, y)
 				// }
@@ -82,10 +87,10 @@ func (d *DHCPService) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, 
 			}
 		}
 		if len(requestedIP) == 0 { // no IP provided at all... why? FIXME
-			fmt.Printf("DHCP Request from %s (empty IP, so we're just ignoring this request)\n", mac.String())
+			fmt.Printf("DHCP Request (%s) from %s (empty IP, so we're just ignoring this request)\n", state, mac.String())
 			return nil
 		}
-		fmt.Printf("DHCP Request from %s (we disagree about %s)\n", mac.String(), requestedIP)
+		fmt.Printf("DHCP Request (%s) from %s (we disagree about %s)\n", state, mac.String(), requestedIP)
 		return dhcp4.ReplyPacket(packet, dhcp4.NAK, d.ip.To4(), nil, 0, nil)
 	case dhcp4.Release:
 		// FIXME: release from DB?  tick a flag?  increment a counter?  send to StatHat?
