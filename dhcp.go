@@ -65,7 +65,8 @@ func (d *DHCPService) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, 
 		// FIXME: send to StatHat and/or increment a counter
 		mac := packet.CHAddr()
 		fmt.Printf("DHCP Request from %s...\n", mac.String())
-		if requestedIP := net.IP(reqOptions[dhcp4.OptionRequestedIPAddress]); len(requestedIP) == 4 { // valid and IPv4
+		requestedIP := net.IP(reqOptions[dhcp4.OptionRequestedIPAddress])
+		if len(requestedIP) == 4 { // valid and IPv4
 			fmt.Printf("DHCP Request from %s wanting %s\n", mac.String(), requestedIP.String())
 			ip := d.getIPFromMAC(mac, packet, reqOptions)
 			if ip.Equal(requestedIP) {
@@ -80,6 +81,11 @@ func (d *DHCPService) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, 
 				return dhcp4.ReplyPacket(packet, dhcp4.ACK, d.ip.To4(), requestedIP.To4(), d.leaseDuration, options.SelectOrderOrAll(reqOptions[dhcp4.OptionParameterRequestList]))
 			}
 		}
+		if len(requestedIP) == 0 { // no IP provided at all... why? FIXME
+			fmt.Printf("DHCP Request from %s (empty IP, so we're just ignoring this request)\n", mac.String())
+			return nil
+		}
+		fmt.Printf("DHCP Request from %s (we disagree about %s)\n", mac.String(), requestedIP)
 		return dhcp4.ReplyPacket(packet, dhcp4.NAK, d.ip.To4(), nil, 0, nil)
 	case dhcp4.Release:
 		// FIXME: release from DB?  tick a flag?  increment a counter?  send to StatHat?
