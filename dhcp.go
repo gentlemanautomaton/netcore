@@ -45,6 +45,7 @@ func dhcpSetup(cfg *Config, etc *etcd.Client) chan error {
 func (d *DHCPService) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, reqOptions dhcp4.Options) (response dhcp4.Packet) {
 	switch msgType {
 	case dhcp4.Discover:
+		// RFC 2131 4.3.1
 		// FIXME: send to StatHat and/or increment a counter
 		mac := packet.CHAddr()
 		fmt.Printf("DHCP Discover from %s\n", mac.String())
@@ -62,6 +63,7 @@ func (d *DHCPService) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, 
 		}
 		return nil
 	case dhcp4.Request:
+		// RFC 2131 4.3.2
 		// FIXME: send to StatHat and/or increment a counter
 		mac := packet.CHAddr()
 		fmt.Printf("DHCP Request from %s...\n", mac.String())
@@ -92,15 +94,18 @@ func (d *DHCPService) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, 
 		}
 		fmt.Printf("DHCP Request (%s) from %s (we disagree about %s)\n", state, mac.String(), requestedIP)
 		return dhcp4.ReplyPacket(packet, dhcp4.NAK, d.ip.To4(), nil, 0, nil)
-	case dhcp4.Release:
-		// FIXME: release from DB?  tick a flag?  increment a counter?  send to StatHat?
-		mac := packet.CHAddr()
-		fmt.Printf("DHCP Release from %s\n", mac.String())
 	case dhcp4.Decline:
+		// RFC 2131 4.3.3
 		// FIXME: release from DB?  tick a flag?  increment a counter?  send to StatHat?
 		mac := packet.CHAddr()
 		fmt.Printf("DHCP Decline from %s\n", mac.String())
+	case dhcp4.Release:
+		// RFC 2131 4.3.4
+		// FIXME: release from DB?  tick a flag?  increment a counter?  send to StatHat?
+		mac := packet.CHAddr()
+		fmt.Printf("DHCP Release from %s\n", mac.String())
 	case dhcp4.Inform:
+		// RFC 2131 4.3.5
 		// FIXME: release from DB?  tick a flag?  increment a counter?  send to StatHat?
 		// FIXME: we should reply with valuable info, but not assign an IP to this client, per RFC 2131 for DHCPINFORM
 		// NOTE: the client's IP is supposed to only be in the ciaddr field, not the requested IP field, per RFC 2131 4.4.3
