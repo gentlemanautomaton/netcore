@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"flag"
+	"fmt"
 	"net"
 	"strconv"
 	"strings"
@@ -42,7 +43,11 @@ var ErrNoDHCPIP = errors.New("This host has not been assigned a DHCP IP.")
 var ErrNoGateway = errors.New("This zone does not have an assigned gateway.")
 
 func getConfig(etc *etcd.Client) (*Config, error) {
+	fmt.Println("Getting CONFIG")
+
+	fmt.Println("precreate")
 	etc.CreateDir("config", 0)
+	fmt.Println("postcreate")
 
 	cfg := new(Config)
 
@@ -206,6 +211,8 @@ func getConfig(etc *etcd.Client) (*Config, error) {
 			cfg.dnsForwarders = strings.Split(",", response.Node.Value)
 		}
 	}
+
+	fmt.Printf("CONFIG: [%+v]\n", cfg)
 
 	return cfg, nil
 }

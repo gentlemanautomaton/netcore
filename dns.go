@@ -12,6 +12,8 @@ import (
 )
 
 func dnsSetup(cfg *Config, etc *etcd.Client) chan error {
+	fmt.Println("DNSSETUP")
+
 	dns.HandleFunc(".", func(w dns.ResponseWriter, req *dns.Msg) { dnsQueryServe(cfg, etc, w, req) })
 	etc.CreateDir("dns", 0)
 	exit := make(chan error, 1)

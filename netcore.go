@@ -15,7 +15,9 @@ func init() {
 func main() {
 	etc := etcdSetup(*etcdServers)
 
+	fmt.Println("PRECONFIG")
 	cfg, err := getConfig(etc)
+	fmt.Println("POSTCONFIG")
 
 	if err != nil {
 		fmt.Printf("Configuration failed: %s\n", err)
