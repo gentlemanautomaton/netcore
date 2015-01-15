@@ -99,6 +99,7 @@ func (d *DHCPService) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, 
 		// TODO: Send an email?
 
 		return nil
+
 	case dhcp4.Request:
 		// RFC 2131 4.3.2
 		// FIXME: send to StatHat and/or increment a counter
@@ -170,16 +171,19 @@ func (d *DHCPService) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, 
 
 		fmt.Printf("DHCP Request (%s) from %s wanting %s (we reject due to address collision)\n", state, mac.String(), requestedIP.String())
 		return dhcp4.ReplyPacket(packet, dhcp4.NAK, d.ip.To4(), nil, 0, nil)
+
 	case dhcp4.Decline:
 		// RFC 2131 4.3.3
 		// FIXME: release from DB?  tick a flag?  increment a counter?  send to StatHat?
 		mac := packet.CHAddr()
 		fmt.Printf("DHCP Decline from %s\n", mac.String())
+
 	case dhcp4.Release:
 		// RFC 2131 4.3.4
 		// FIXME: release from DB?  tick a flag?  increment a counter?  send to StatHat?
 		mac := packet.CHAddr()
 		fmt.Printf("DHCP Release from %s\n", mac.String())
+
 	case dhcp4.Inform:
 		// RFC 2131 4.3.5
 		// FIXME: release from DB?  tick a flag?  increment a counter?  send to StatHat?
@@ -191,10 +195,11 @@ func (d *DHCPService) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, 
 			fmt.Printf("DHCP Inform from %s for %s \n", mac.String(), ip.String())
 			if len(ip) == net.IPv4len {
 				options := d.getOptionsFromMAC(mac)
-				return informReplyPacket(packet, dhcp4.Inform, d.ip.To4(), options.SelectOrderOrAll(reqOptions[dhcp4.OptionParameterRequestList]))
+				return informReplyPacket(packet, dhcp4.ACK, d.ip.To4(), options.SelectOrderOrAll(reqOptions[dhcp4.OptionParameterRequestList]))
 			}
 		}
 	}
+
 	return nil
 }
 
