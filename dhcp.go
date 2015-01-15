@@ -75,7 +75,7 @@ func (d *DHCPService) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, 
 			// for x, y := range options {
 			// 	fmt.Printf("\tO[%v] %v %s\n", x, y, y)
 			// }
-			return dhcp4.ReplyPacket(packet, dhcp4.Offer, d.ip.To4(), lease.ip.To4(), d.getLeaseTimeForRequest(reqOptions), options.SelectOrderOrAll(reqOptions[dhcp4.OptionParameterRequestList]))
+			return dhcp4.ReplyPacket(packet, dhcp4.Offer, d.ip.To4(), lease.ip.To4(), d.getLeaseDurationForRequest(reqOptions), options.SelectOrderOrAll(reqOptions[dhcp4.OptionParameterRequestList]))
 		}
 
 		// New Lease
@@ -142,7 +142,7 @@ func (d *DHCPService) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, 
 		lease, err := d.getLease(mac)
 		if err == nil {
 			// Existing Lease
-			lease.duration = d.getLeaseTimeForRequest(reqOptions)
+			lease.duration = d.getLeaseDurationForRequest(reqOptions)
 			if lease.ip.Equal(requestedIP) {
 				err = d.renewLease(lease)
 			} else {
@@ -154,7 +154,7 @@ func (d *DHCPService) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, 
 			lease = dhcpLease{
 				mac:      mac,
 				ip:       requestedIP,
-				duration: d.getLeaseTimeForRequest(reqOptions),
+				duration: d.getLeaseDurationForRequest(reqOptions),
 			}
 			err = d.createLease(lease)
 		}
@@ -204,7 +204,7 @@ func (d *DHCPService) getRequestState(packet dhcp4.Packet, reqOptions dhcp4.Opti
 	return state, requestedIP
 }
 
-func (d *DHCPService) getLeaseTimeForRequest(reqOptions dhcp4.Options) time.Duration {
+func (d *DHCPService) getLeaseDurationForRequest(reqOptions dhcp4.Options) time.Duration {
 	leaseBytes := reqOptions[dhcp4.OptionIPAddressLeaseTime]
 	if len(leaseBytes) == 4 {
 		leaseDuration := time.Duration(binary.BigEndian.Uint32(leaseBytes)) * time.Second
