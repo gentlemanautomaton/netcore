@@ -29,6 +29,8 @@ type dhcpLease struct {
 	duration time.Duration
 }
 
+const minimumLeaseDuration = 60 * time.Second // FIXME: put this in a config
+
 func dhcpSetup(cfg *Config, etc *etcd.Client) chan error {
 	etc.CreateDir("dhcp", 0)
 	exit := make(chan error, 1)
@@ -75,7 +77,7 @@ func (d *DHCPService) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, 
 			// for x, y := range options {
 			// 	fmt.Printf("\tO[%v] %v %s\n", x, y, y)
 			// }
-			return dhcp4.ReplyPacket(packet, dhcp4.Offer, d.ip.To4(), lease.ip.To4(), d.getLeaseDurationForRequest(reqOptions), options.SelectOrderOrAll(reqOptions[dhcp4.OptionParameterRequestList]))
+			return dhcp4.ReplyPacket(packet, dhcp4.Offer, d.ip.To4(), lease.ip.To4(), d.getLeaseDurationForRequest(reqOptions, lease.duration), options.SelectOrderOrAll(reqOptions[dhcp4.OptionParameterRequestList]))
 		}
 
 		// New Lease
@@ -89,7 +91,7 @@ func (d *DHCPService) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, 
 			// for x, y := range options {
 			// 	fmt.Printf("\tO[%v] %v %s\n", x, y, y)
 			// }
-			return dhcp4.ReplyPacket(packet, dhcp4.Offer, d.ip.To4(), ip.To4(), d.leaseDuration, options.SelectOrderOrAll(reqOptions[dhcp4.OptionParameterRequestList]))
+			return dhcp4.ReplyPacket(packet, dhcp4.Offer, d.ip.To4(), ip.To4(), d.getLeaseDurationForRequest(reqOptions, d.leaseDuration), options.SelectOrderOrAll(reqOptions[dhcp4.OptionParameterRequestList]))
 		}
 
 		fmt.Printf("DHCP Discover from %s (no offer due to no addresses available in pool)\n", mac.String())
@@ -142,7 +144,7 @@ func (d *DHCPService) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, 
 		lease, err := d.getLease(mac)
 		if err == nil {
 			// Existing Lease
-			lease.duration = d.getLeaseDurationForRequest(reqOptions)
+			lease.duration = d.getLeaseDurationForRequest(reqOptions, lease.duration)
 			if lease.ip.Equal(requestedIP) {
 				err = d.renewLease(lease)
 			} else {
@@ -154,7 +156,7 @@ func (d *DHCPService) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, 
 			lease = dhcpLease{
 				mac:      mac,
 				ip:       requestedIP,
-				duration: d.getLeaseDurationForRequest(reqOptions),
+				duration: d.getLeaseDurationForRequest(reqOptions, d.leaseDuration),
 			}
 			err = d.createLease(lease)
 		}
@@ -163,7 +165,7 @@ func (d *DHCPService) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, 
 			d.maintainDNSRecords(lease.mac, lease.ip, packet, reqOptions) // TODO: Move this?
 			options := d.getOptionsFromMAC(mac)
 			fmt.Printf("DHCP Request (%s) from %s wanting %s (we agree)\n", state, mac.String(), requestedIP.String())
-			return dhcp4.ReplyPacket(packet, dhcp4.ACK, d.ip.To4(), requestedIP.To4(), d.leaseDuration, options.SelectOrderOrAll(reqOptions[dhcp4.OptionParameterRequestList]))
+			return dhcp4.ReplyPacket(packet, dhcp4.ACK, d.ip.To4(), requestedIP.To4(), lease.duration, options.SelectOrderOrAll(reqOptions[dhcp4.OptionParameterRequestList]))
 		}
 
 		fmt.Printf("DHCP Request (%s) from %s wanting %s (we reject due to address collision)\n", state, mac.String(), requestedIP.String())
@@ -204,22 +206,30 @@ func (d *DHCPService) getRequestState(packet dhcp4.Packet, reqOptions dhcp4.Opti
 	return state, requestedIP
 }
 
-func (d *DHCPService) getLeaseDurationForRequest(reqOptions dhcp4.Options) time.Duration {
+func (d *DHCPService) getLeaseDurationForRequest(reqOptions dhcp4.Options, defaultDuration time.Duration) time.Duration {
 	leaseBytes := reqOptions[dhcp4.OptionIPAddressLeaseTime]
 	if len(leaseBytes) == 4 {
 		leaseDuration := time.Duration(binary.BigEndian.Uint32(leaseBytes)) * time.Second
+		if leaseDuration < minimumLeaseDuration {
+			// They asked for a crazy short lease, so we give them the minimum allowed by policy
+			return minimumLeaseDuration
+		}
 		if leaseDuration < d.leaseDuration {
+			// They asked for a good lease, so we gave it to 'em
 			return leaseDuration
 		}
+		// They asked for a lease that was longer than we permit
+		return d.leaseDuration
 	}
-	return d.leaseDuration
+	// They didn't ask for a duration, so we give them what their existing lease had (or the default)
+	return defaultDuration
 }
 
 func (d *DHCPService) getIPFromPool() net.IP {
 	// locate an unused IP address (can this be more efficient?  yes!  FIXME)
 	// TODO: Create a channel and spawn a goproc with something like this function to feed it; then have the server pull addresses from that channel
 	for ip := dhcp4.IPAdd(d.guestPool.IP, 1); d.guestPool.Contains(ip); ip = dhcp4.IPAdd(ip, 1) {
-		fmt.Println(ip.String())
+		//fmt.Println(ip.String())
 		response, _ := d.etcdClient.Get("dhcp/"+ip.String(), false, false)
 		if response == nil || response.Node == nil { // this means that the IP is not already occupied
 			return ip
