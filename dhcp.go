@@ -144,7 +144,7 @@ func (d *DHCPService) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, 
 		lease, err := d.getLease(mac)
 		if err == nil {
 			// Existing Lease
-			lease.duration = d.getLeaseDurationForRequest(reqOptions, lease.duration)
+			lease.duration = d.getLeaseDurationForRequest(reqOptions, d.leaseDuration)
 			if lease.ip.Equal(requestedIP) {
 				err = d.renewLease(lease)
 			} else {
@@ -221,7 +221,12 @@ func (d *DHCPService) getLeaseDurationForRequest(reqOptions dhcp4.Options, defau
 		// They asked for a lease that was longer than we permit
 		return d.leaseDuration
 	}
+
 	// They didn't ask for a duration, so we give them what their existing lease had (or the default)
+	if defaultDuration < minimumLeaseDuration {
+		// They had a crazy short lease, so we give them the minimum allowed by policy
+		return minimumLeaseDuration
+	}
 	return defaultDuration
 }
 
