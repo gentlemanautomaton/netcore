@@ -113,13 +113,13 @@ func (d *DHCPService) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, 
 		// Check IP presence
 		state, requestedIP := d.getRequestState(packet, reqOptions)
 		fmt.Printf("DHCP Request (%s) from %s...\n", state, mac.String())
-		if len(requestedIP) == 0 { // no IP provided at all... why? FIXME
+		if len(requestedIP) == 0 || requestedIP.IsUnspecified() { // no IP provided at all... why? FIXME
 			fmt.Printf("DHCP Request (%s) from %s (empty IP, so we're just ignoring this request)\n", state, mac.String())
 			return nil
 		}
 
 		// Check IPv4
-		if len(requestedIP) != 4 {
+		if len(requestedIP) != net.IPv4len {
 			fmt.Printf("DHCP Request (%s) from %s wanting %s (IPv6 address requested, so we're just ignoring this request)\n", state, mac.String(), requestedIP.String())
 			return nil
 		}
@@ -132,7 +132,7 @@ func (d *DHCPService) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, 
 
 		// Check Target Server
 		targetServerIP := packet.SIAddr()
-		if len(targetServerIP) == 4 {
+		if len(targetServerIP) > 0 && !targetServerIP.IsUnspecified() {
 			fmt.Printf("DHCP Request (%s) from %s wanting %s is in response to a DHCP offer from %s\n", state, mac.String(), requestedIP.String(), targetServerIP.String())
 			if d.ip.Equal(targetServerIP) {
 				return nil
@@ -161,7 +161,7 @@ func (d *DHCPService) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, 
 			err = d.createLease(lease)
 		}
 
-		if err != nil {
+		if err == nil {
 			d.maintainDNSRecords(lease.mac, lease.ip, packet, reqOptions) // TODO: Move this?
 			options := d.getOptionsFromMAC(mac)
 			fmt.Printf("DHCP Request (%s) from %s wanting %s (we agree)\n", state, mac.String(), requestedIP.String())
@@ -186,7 +186,14 @@ func (d *DHCPService) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, 
 		// FIXME: we should reply with valuable info, but not assign an IP to this client, per RFC 2131 for DHCPINFORM
 		// NOTE: the client's IP is supposed to only be in the ciaddr field, not the requested IP field, per RFC 2131 4.4.3
 		mac := packet.CHAddr()
-		fmt.Printf("DHCP Inform from %s\n", mac.String())
+		ip := packet.CIAddr()
+		if len(ip) > 0 && !ip.IsUnspecified() {
+			fmt.Printf("DHCP Inform from %s for %s \n", mac.String(), ip.String())
+			if len(ip) == net.IPv4len {
+				options := d.getOptionsFromMAC(mac)
+				return informReplyPacket(packet, dhcp4.Inform, d.ip.To4(), options.SelectOrderOrAll(reqOptions[dhcp4.OptionParameterRequestList]))
+			}
+		}
 	}
 	return nil
 }
@@ -199,7 +206,7 @@ func (d *DHCPService) isMACPermitted(mac net.HardwareAddr) bool {
 func (d *DHCPService) getRequestState(packet dhcp4.Packet, reqOptions dhcp4.Options) (string, net.IP) {
 	state := "NEW"
 	requestedIP := net.IP(reqOptions[dhcp4.OptionRequestedIPAddress])
-	if len(requestedIP) == 0 { // empty
+	if len(requestedIP) == 0 || requestedIP.IsUnspecified() { // empty
 		state = "RENEWAL"
 		requestedIP = packet.CIAddr()
 	}
@@ -404,4 +411,23 @@ func (d *DHCPService) getOptionsFromMAC(mac net.HardwareAddr) dhcp4.Options {
 	}
 
 	return options
+}
+
+// ReplyPacket creates a reply packet that a Server would send to a client.
+// It uses the req Packet param to copy across common/necessary fields to
+// associate the reply the request.
+func informReplyPacket(req dhcp4.Packet, mt dhcp4.MessageType, serverID net.IP, options []dhcp4.Option) dhcp4.Packet {
+	p := dhcp4.NewPacket(dhcp4.BootReply)
+	p.SetXId(req.XId())
+	p.SetFlags(req.Flags())
+	p.SetGIAddr(req.GIAddr())
+	p.SetCHAddr(req.CHAddr())
+	p.SetSecs(req.Secs())
+	p.AddOption(dhcp4.OptionDHCPMessageType, []byte{byte(mt)})
+	p.AddOption(dhcp4.OptionServerIdentifier, []byte(serverID))
+	for _, o := range options {
+		p.AddOption(o.Code, o.Value)
+	}
+	p.PadToMinSize()
+	return p
 }
