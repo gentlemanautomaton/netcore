@@ -207,27 +207,28 @@ func (d *DHCPService) getRequestState(packet dhcp4.Packet, reqOptions dhcp4.Opti
 }
 
 func (d *DHCPService) getLeaseDurationForRequest(reqOptions dhcp4.Options, defaultDuration time.Duration) time.Duration {
+	// If a requested lease duration is accepted by policy we hand it back to them
+	// If a requested lease duration is not accepted by policy we constrain it to the policy's minimum and maximum
+	// If a lease duration was not requested then we give them the default duration provided to this function
+	// The provided default will either be the remaining duration of an existing lease or the configured default duration for the server
+	// The provided default will be constrained to the policy's minimum duration
+	leaseDuration := defaultDuration
+
 	leaseBytes := reqOptions[dhcp4.OptionIPAddressLeaseTime]
 	if len(leaseBytes) == 4 {
-		leaseDuration := time.Duration(binary.BigEndian.Uint32(leaseBytes)) * time.Second
-		if leaseDuration < minimumLeaseDuration {
-			// They asked for a crazy short lease, so we give them the minimum allowed by policy
-			return minimumLeaseDuration
+		leaseDuration = time.Duration(binary.BigEndian.Uint32(leaseBytes)) * time.Second
+		if leaseDuration > d.leaseDuration {
+			// The requested lease duration is too long so we give them the maximum allowed by policy
+			leaseDuration = d.leaseDuration
 		}
-		if leaseDuration < d.leaseDuration {
-			// They asked for a good lease, so we gave it to 'em
-			return leaseDuration
-		}
-		// They asked for a lease that was longer than we permit
-		return d.leaseDuration
 	}
 
-	// They didn't ask for a duration, so we give them what their existing lease had (or the default)
-	if defaultDuration < minimumLeaseDuration {
-		// They had a crazy short lease, so we give them the minimum allowed by policy
+	if leaseDuration < minimumLeaseDuration {
+		// The lease duration is too short so we give them the minimum allowed by policy
 		return minimumLeaseDuration
 	}
-	return defaultDuration
+
+	return leaseDuration
 }
 
 func (d *DHCPService) getIPFromPool() net.IP {
