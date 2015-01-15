@@ -186,6 +186,7 @@ func (d *DHCPService) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, 
 
 	case dhcp4.Inform:
 		// RFC 2131 4.3.5
+		// https://tools.ietf.org/html/draft-ietf-dhc-dhcpinform-clarify-06
 		// FIXME: release from DB?  tick a flag?  increment a counter?  send to StatHat?
 		// FIXME: we should reply with valuable info, but not assign an IP to this client, per RFC 2131 for DHCPINFORM
 		// NOTE: the client's IP is supposed to only be in the ciaddr field, not the requested IP field, per RFC 2131 4.4.3
@@ -193,7 +194,7 @@ func (d *DHCPService) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, 
 		ip := packet.CIAddr()
 		if len(ip) > 0 && !ip.IsUnspecified() {
 			fmt.Printf("DHCP Inform from %s for %s \n", mac.String(), ip.String())
-			if len(ip) == net.IPv4len {
+			if len(ip) == net.IPv4len && d.guestPool.Contains(ip) {
 				options := d.getOptionsFromMAC(mac)
 				return informReplyPacket(packet, dhcp4.ACK, d.ip.To4(), options.SelectOrderOrAll(reqOptions[dhcp4.OptionParameterRequestList]))
 			}
@@ -420,14 +421,15 @@ func (d *DHCPService) getOptionsFromMAC(mac net.HardwareAddr) dhcp4.Options {
 
 // ReplyPacket creates a reply packet that a Server would send to a client.
 // It uses the req Packet param to copy across common/necessary fields to
-// associate the reply the request.
+// associate the reply with the request.
 func informReplyPacket(req dhcp4.Packet, mt dhcp4.MessageType, serverID net.IP, options []dhcp4.Option) dhcp4.Packet {
 	p := dhcp4.NewPacket(dhcp4.BootReply)
 	p.SetXId(req.XId())
+	p.SetHType(req.HType())
+	p[2] = req.HLen() // dhcp4 library does not provide a setter
 	p.SetFlags(req.Flags())
-	p.SetGIAddr(req.GIAddr())
+	p.SetCIAddr(req.CIAddr())
 	p.SetCHAddr(req.CHAddr())
-	p.SetSecs(req.Secs())
 	p.AddOption(dhcp4.OptionDHCPMessageType, []byte{byte(mt)})
 	p.AddOption(dhcp4.OptionServerIdentifier, []byte(serverID))
 	for _, o := range options {
