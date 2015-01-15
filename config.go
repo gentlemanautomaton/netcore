@@ -32,6 +32,8 @@ type Config struct {
 var setZone = flag.String("setZone", "", "Overwrite (permanently) the zone that this machine is in.")
 var setDHCPIP = flag.String("setDHCPIP", "", "Overwrite (permanently) the DHCP hosting IP for this machine (or set it to empty to disable DHCP).")
 var setDHCPNIC = flag.String("setDHCPNIC", "", "Overwrite (permanently) the DHCP hosting NIC name for this machine (or set it to empty to disable DHCP).")
+var setDHCPSubnet = flag.String("setDHCPSubnet", "", "Overwrite (permanently) the DHCP subnet for this zone (requires setZone flag or it'll no-op).")
+var setDHCPLeaseDuration = flag.String("setDHCPLeaseDuration", "", "Overwrite (permanently) the default DHCP lease duration for this zone (requires setZone flag or it'll no-op).")
 
 // ErrNoZone is an error returned during config init to indicate that the host has not been assigned to a zone in etcd keyed off of its hostname
 var ErrNoZone = errors.New("This host has not been assigned to a zone.")
@@ -157,8 +159,8 @@ func getConfig(etc *etcd.Client) (*Config, error) {
 	{
 		var response *etcd.Response
 		var err error
-		if setDHCPIP != nil && *setZone != "" {
-			response, err = etc.Set("config/"+cfg.zone+"/dhcpsubnet", *setDHCPIP, 0)
+		if setZone != nil && *setZone != "" && setDHCPSubnet != nil && *setDHCPSubnet != "" {
+			response, err = etc.Set("config/"+cfg.zone+"/dhcpsubnet", *setDHCPSubnet, 0)
 		} else {
 			response, err = etc.Get("config/"+cfg.zone+"/dhcpsubnet", false, false)
 		}
@@ -179,8 +181,8 @@ func getConfig(etc *etcd.Client) (*Config, error) {
 		cfg.dhcpLeaseDuration = 12 * time.Hour // default setting is 12 hours
 		var response *etcd.Response
 		var err error
-		if setDHCPIP != nil && *setZone != "" {
-			response, err = etc.Set("config/"+cfg.zone+"/dhcpleaseduration", *setDHCPIP, 0)
+		if setZone != nil && *setZone != "" && setDHCPLeaseDuration != nil && *setDHCPLeaseDuration != "" {
+			response, err = etc.Set("config/"+cfg.zone+"/dhcpleaseduration", *setDHCPLeaseDuration, 0)
 		} else {
 			response, err = etc.Get("config/"+cfg.zone+"/dhcpleaseduration", false, false)
 		}
