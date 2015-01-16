@@ -17,6 +17,7 @@ import (
 type DHCPService struct {
 	ip             net.IP
 	domain         string
+	subnet         *net.IPNet
 	guestPool      *net.IPNet
 	leaseDuration  time.Duration
 	defaultOptions dhcp4.Options // FIXME: make different options per pool?
@@ -39,6 +40,7 @@ func dhcpSetup(cfg *Config, etc *etcd.Client) chan error {
 			ip:            cfg.DHCPIP(),
 			leaseDuration: cfg.DHCPLeaseDuration(),
 			etcdClient:    etc,
+			subnet:        cfg.Subnet(),
 			guestPool:     cfg.DHCPSubnet(),
 			domain:        cfg.Domain(),
 			defaultOptions: dhcp4.Options{
@@ -126,7 +128,7 @@ func (d *DHCPService) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, 
 		}
 
 		// Check IP subnet
-		if !d.guestPool.Contains(requestedIP) {
+		if !d.subnet.Contains(requestedIP) {
 			fmt.Printf("DHCP Request (%s) from %s wanting %s (we reject due to wrong subnet)\n", state, mac.String(), requestedIP.String())
 			return dhcp4.ReplyPacket(packet, dhcp4.NAK, d.ip.To4(), nil, 0, nil)
 		}
