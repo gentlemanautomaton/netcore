@@ -155,6 +155,12 @@ func (d *DHCPService) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, 
 				return dhcp4.ReplyPacket(packet, dhcp4.NAK, d.ip.To4(), nil, 0, nil)
 			}
 		} else {
+			// Check IP subnet is within the guestPool (we don't want users requesting non-pool addresses unless we assigned it to their MAC, administratively)
+			if !d.guestPool.Contains(requestedIP) {
+				fmt.Printf("DHCP Request (%s) from %s wanting %s (we reject due to not being within the guestPool)\n", state, mac.String(), requestedIP.String())
+				return dhcp4.ReplyPacket(packet, dhcp4.NAK, d.ip.To4(), nil, 0, nil)
+			}
+
 			// New lease
 			lease = dhcpLease{
 				mac:      mac,
