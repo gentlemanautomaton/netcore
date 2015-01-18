@@ -1,0 +1,55 @@
+netcore
+=======
+
+DHCP and DNS services with all config and data stored in etcd.  This
+is intended to be a configurable all-in-one binary to run the core 
+network services for a multi-site business network.  The configuration
+is intended to be shared across all sites with per-site customization.
+
+This is being used in production in a place where the missing bits are
+acceptable to be missing, for now.  We're committed to adding loads of
+functionality that is necessary for the production environment.
+
+Patches and pull requests are gladly welcomed.
+
+
+## What Works ##
+
+* Most of DHCP, at least the critical parts
+* Much of DNS, but not all record types
+* DHCP leases update DNS; DNS records expire when DHCP leases expire
+* DHCP config can be be set per-site and can have settings overridden
+  on a per-host basis (by MAC address)
+* DHCP leases can be reserved, as one would expect
+* Can shut off DHCP service by not defining necessary DHCP host config
+* DHCP only does IPv4 stuff, no IPv6 details at all
+* DNS happily does AAAA records
+* All services run on IPv4, but there's no reason it couldn't work for
+  IPv6 too.
+
+
+## TODO ##
+
+* Explain how to configure it.  It really is easy, just not obvious.
+* Tons.
+* DHCP needs DHCPRELEASE, DHCPDECLINE
+* DNS needs everything related to DNSSEC
+* DNS needs more records supported
+* We plan to provide some sort of UI as a separate project
+* Allow admin to define a computer by wired and wireless adapters to
+  allow prioritization of DNS registration to favor one network
+  connection over another for the same device
+* Allow for a device to be followed among various sites by keeping a
+  defined DNS entry updated for the device
+
+
+## Requires ##
+
+* Functioning etcd system
+
+
+## Plans ##
+
+* Provide simple SMTP service for store-and-forward.
+* Determine other services that would make sense to provide here
+  without being "for the sake of monolitic systems".
