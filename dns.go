@@ -63,24 +63,10 @@ recordLookup:
 	{
 		wouldLikeForwarder = true
 
-		qType := dns.Type(q.Qtype).String() // query type
+		//qType := dns.Type(q.Qtype).String() // query type
 		//fmt.Printf("[Lookup [%s] [%s]]\n", q.Name, qType)
-		pathParts := strings.Split(strings.TrimSuffix(q.Name, "."), ".") // breakup the queryed name
-		queryPath := strings.Join(reverseSlice(pathParts), "/")          // reverse and join them with a slash delimiter
-		keyRoot := strings.ToLower("/dns/" + queryPath)
 
-		// lookup CNAME
-		key = keyRoot + "/@cname"                 // structure the lookup key
-		response, err := etc.Get(key, true, true) // do the lookup
-		if err == nil && response != nil && response.Node != nil && len(response.Node.Nodes) > 0 {
-			qType = "CNAME"
-			//fmt.Printf("[Lookup [%s] [%s] (altered)]\n", q.Name, qType)
-		} else {
-			// lookup the requested RR type
-			key = keyRoot + "/@" + strings.ToLower(qType) // structure the lookup key
-			response, err = etc.Get(key, true, true)      // do the lookup
-			//fmt.Printf("[Lookup [%s] [%s] (normal lookup) %s]\n", q.Name, qType, key)
-		}
+		qType, response, err := queryEtcd(q, etc)
 
 		if err == nil && response != nil && response.Node != nil && len(response.Node.Nodes) > 0 {
 			//fmt.Printf("[Lookup [%s] [%s] (matched something)]\n", q.Name, qType)
@@ -357,6 +343,33 @@ recordLookup:
 	failMsg.Rcode = dns.RcodeNameError
 	w.WriteMsg(failMsg)
 	return
+}
+
+func queryEtcd(q dns.Question, etc *etcd.Client) (string, *etcd.Response, error) {
+	qType := dns.Type(q.Qtype).String() // query type
+	//fmt.Printf("[Lookup [%s] [%s]]\n", q.Name, qType)
+	keyRoot := fqdnToKey(q.Name)
+
+	// Always attempt CNAME lookup first
+	key := keyRoot + "/@cname"                // structure the lookup key
+	response, err := etc.Get(key, true, true) // do the lookup
+	if err == nil && response != nil && response.Node != nil && len(response.Node.Nodes) > 0 {
+		// FIXME: Check for infinite recursion?
+		//fmt.Printf("[Lookup [%s] [%s] (altered)]\n", q.Name, qType)
+		return "CNAME", response, err
+	}
+
+	// Look up the requested RR type
+	key = keyRoot + "/@" + strings.ToLower(qType) // structure the lookup key
+	response, err = etc.Get(key, true, true)      // do the lookup
+	//fmt.Printf("[Lookup [%s] [%s] (normal lookup) %s]\n", q.Name, qType, key)
+	return qType, response, err
+}
+
+func fqdnToKey(fqdn string) string {
+	parts := strings.Split(strings.TrimSuffix(fqdn, "."), ".") // breakup the queryed name
+	path := strings.Join(reverseSlice(parts), "/")             // reverse and join them with a slash delimiter
+	return strings.ToLower("/dns/" + path)
 }
 
 // FIXME: please support DNSSEC, verification, signing, etc...
