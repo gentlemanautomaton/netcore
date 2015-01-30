@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"strings"
 	"time"
@@ -63,21 +64,21 @@ func (d *DHCPService) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, 
 
 		// Check MAC blacklist
 		if !d.isMACPermitted(mac) {
-			fmt.Printf("DHCP Discover from %s\n is not permitted", mac.String())
+			log.Printf("DHCP Discover from %s\n is not permitted", mac.String())
 			return nil
 		}
-		fmt.Printf("DHCP Discover from %s\n", mac.String())
+		log.Printf("DHCP Discover from %s\n", mac.String())
 
 		// Existing Lease
 		lease, err := d.getLease(mac)
 		if err == nil {
 			options := d.getOptionsFromMAC(mac)
-			fmt.Printf("DHCP Discover from %s (we offer %s from current lease)\n", mac.String(), lease.ip.String())
+			log.Printf("DHCP Discover from %s (we offer %s from current lease)\n", mac.String(), lease.ip.String())
 			// for x, y := range reqOptions {
-			// 	fmt.Printf("\tR[%v] %v %s\n", x, y, y)
+			// 	log.Printf("\tR[%v] %v %s\n", x, y, y)
 			// }
 			// for x, y := range options {
-			// 	fmt.Printf("\tO[%v] %v %s\n", x, y, y)
+			// 	log.Printf("\tO[%v] %v %s\n", x, y, y)
 			// }
 			return dhcp4.ReplyPacket(packet, dhcp4.Offer, d.ip.To4(), lease.ip.To4(), d.getLeaseDurationForRequest(reqOptions, lease.duration), options.SelectOrderOrAll(reqOptions[dhcp4.OptionParameterRequestList]))
 		}
@@ -86,17 +87,17 @@ func (d *DHCPService) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, 
 		ip := d.getIPFromPool()
 		if ip != nil {
 			options := d.getOptionsFromMAC(mac)
-			fmt.Printf("DHCP Discover from %s (we offer %s from pool)\n", mac.String(), ip.String())
+			log.Printf("DHCP Discover from %s (we offer %s from pool)\n", mac.String(), ip.String())
 			// for x, y := range reqOptions {
-			// 	fmt.Printf("\tR[%v] %v %s\n", x, y, y)
+			// 	log.Printf("\tR[%v] %v %s\n", x, y, y)
 			// }
 			// for x, y := range options {
-			// 	fmt.Printf("\tO[%v] %v %s\n", x, y, y)
+			// 	log.Printf("\tO[%v] %v %s\n", x, y, y)
 			// }
 			return dhcp4.ReplyPacket(packet, dhcp4.Offer, d.ip.To4(), ip.To4(), d.getLeaseDurationForRequest(reqOptions, d.leaseDuration), options.SelectOrderOrAll(reqOptions[dhcp4.OptionParameterRequestList]))
 		}
 
-		fmt.Printf("DHCP Discover from %s (no offer due to no addresses available in pool)\n", mac.String())
+		log.Printf("DHCP Discover from %s (no offer due to no addresses available in pool)\n", mac.String())
 		// FIXME: Send to StatHat and/or increment a counter
 		// TODO: Send an email?
 
@@ -109,41 +110,41 @@ func (d *DHCPService) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, 
 
 		// Check MAC blacklist
 		if !d.isMACPermitted(mac) {
-			fmt.Printf("DHCP Request from %s\n is not permitted", mac.String())
+			log.Printf("DHCP Request from %s\n is not permitted", mac.String())
 			return nil
 		}
 
 		// Check IP presence
 		state, requestedIP := d.getRequestState(packet, reqOptions)
-		fmt.Printf("DHCP Request (%s) from %s...\n", state, mac.String())
+		log.Printf("DHCP Request (%s) from %s...\n", state, mac.String())
 		if len(requestedIP) == 0 || requestedIP.IsUnspecified() { // no IP provided at all... why? FIXME
-			fmt.Printf("DHCP Request (%s) from %s (empty IP, so we're just ignoring this request)\n", state, mac.String())
+			log.Printf("DHCP Request (%s) from %s (empty IP, so we're just ignoring this request)\n", state, mac.String())
 			return nil
 		}
 
 		// Check IPv4
 		if len(requestedIP) != net.IPv4len {
-			fmt.Printf("DHCP Request (%s) from %s wanting %s (IPv6 address requested, so we're just ignoring this request)\n", state, mac.String(), requestedIP.String())
+			log.Printf("DHCP Request (%s) from %s wanting %s (IPv6 address requested, so we're just ignoring this request)\n", state, mac.String(), requestedIP.String())
 			return nil
 		}
 
 		// Check IP subnet
 		if !d.subnet.Contains(requestedIP) {
-			fmt.Printf("DHCP Request (%s) from %s wanting %s (we reject due to wrong subnet)\n", state, mac.String(), requestedIP.String())
+			log.Printf("DHCP Request (%s) from %s wanting %s (we reject due to wrong subnet)\n", state, mac.String(), requestedIP.String())
 			return dhcp4.ReplyPacket(packet, dhcp4.NAK, d.ip.To4(), nil, 0, nil)
 		}
 
 		// Check Target Server
 		targetServerIP := packet.SIAddr()
 		if len(targetServerIP) > 0 && !targetServerIP.IsUnspecified() {
-			fmt.Printf("DHCP Request (%s) from %s wanting %s is in response to a DHCP offer from %s\n", state, mac.String(), requestedIP.String(), targetServerIP.String())
+			log.Printf("DHCP Request (%s) from %s wanting %s is in response to a DHCP offer from %s\n", state, mac.String(), requestedIP.String(), targetServerIP.String())
 			if d.ip.Equal(targetServerIP) {
 				return nil
 			}
 		}
 
 		// Process Request
-		fmt.Printf("DHCP Request (%s) from %s wanting %s...\n", state, mac.String(), requestedIP.String())
+		log.Printf("DHCP Request (%s) from %s wanting %s...\n", state, mac.String(), requestedIP.String())
 		lease, err := d.getLease(mac)
 		if err == nil {
 			// Existing Lease
@@ -151,13 +152,13 @@ func (d *DHCPService) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, 
 			if lease.ip.Equal(requestedIP) {
 				err = d.renewLease(lease)
 			} else {
-				fmt.Printf("DHCP Request (%s) from %s wanting %s (we reject due to lease mismatch, should be %s)\n", state, mac.String(), requestedIP.String(), lease.ip.String())
+				log.Printf("DHCP Request (%s) from %s wanting %s (we reject due to lease mismatch, should be %s)\n", state, mac.String(), requestedIP.String(), lease.ip.String())
 				return dhcp4.ReplyPacket(packet, dhcp4.NAK, d.ip.To4(), nil, 0, nil)
 			}
 		} else {
 			// Check IP subnet is within the guestPool (we don't want users requesting non-pool addresses unless we assigned it to their MAC, administratively)
 			if !d.guestPool.Contains(requestedIP) {
-				fmt.Printf("DHCP Request (%s) from %s wanting %s (we reject due to not being within the guestPool)\n", state, mac.String(), requestedIP.String())
+				log.Printf("DHCP Request (%s) from %s wanting %s (we reject due to not being within the guestPool)\n", state, mac.String(), requestedIP.String())
 				return dhcp4.ReplyPacket(packet, dhcp4.NAK, d.ip.To4(), nil, 0, nil)
 			}
 
@@ -173,24 +174,24 @@ func (d *DHCPService) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, 
 		if err == nil {
 			d.maintainDNSRecords(lease.mac, lease.ip, packet, reqOptions) // TODO: Move this?
 			options := d.getOptionsFromMAC(mac)
-			fmt.Printf("DHCP Request (%s) from %s wanting %s (we agree)\n", state, mac.String(), requestedIP.String())
+			log.Printf("DHCP Request (%s) from %s wanting %s (we agree)\n", state, mac.String(), requestedIP.String())
 			return dhcp4.ReplyPacket(packet, dhcp4.ACK, d.ip.To4(), requestedIP.To4(), lease.duration, options.SelectOrderOrAll(reqOptions[dhcp4.OptionParameterRequestList]))
 		}
 
-		fmt.Printf("DHCP Request (%s) from %s wanting %s (we reject due to address collision)\n", state, mac.String(), requestedIP.String())
+		log.Printf("DHCP Request (%s) from %s wanting %s (we reject due to address collision)\n", state, mac.String(), requestedIP.String())
 		return dhcp4.ReplyPacket(packet, dhcp4.NAK, d.ip.To4(), nil, 0, nil)
 
 	case dhcp4.Decline:
 		// RFC 2131 4.3.3
 		// FIXME: release from DB?  tick a flag?  increment a counter?  send to StatHat?
 		mac := packet.CHAddr()
-		fmt.Printf("DHCP Decline from %s\n", mac.String())
+		log.Printf("DHCP Decline from %s\n", mac.String())
 
 	case dhcp4.Release:
 		// RFC 2131 4.3.4
 		// FIXME: release from DB?  tick a flag?  increment a counter?  send to StatHat?
 		mac := packet.CHAddr()
-		fmt.Printf("DHCP Release from %s\n", mac.String())
+		log.Printf("DHCP Release from %s\n", mac.String())
 
 	case dhcp4.Inform:
 		// RFC 2131 4.3.5
@@ -201,7 +202,7 @@ func (d *DHCPService) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, 
 		mac := packet.CHAddr()
 		ip := packet.CIAddr()
 		if len(ip) > 0 && !ip.IsUnspecified() {
-			fmt.Printf("DHCP Inform from %s for %s \n", mac.String(), ip.String())
+			log.Printf("DHCP Inform from %s for %s \n", mac.String(), ip.String())
 			if len(ip) == net.IPv4len && d.guestPool.Contains(ip) {
 				options := d.getOptionsFromMAC(mac)
 				return informReplyPacket(packet, dhcp4.ACK, d.ip.To4(), options.SelectOrderOrAll(reqOptions[dhcp4.OptionParameterRequestList]))
@@ -256,7 +257,7 @@ func (d *DHCPService) getIPFromPool() net.IP {
 	// locate an unused IP address (can this be more efficient?  yes!  FIXME)
 	// TODO: Create a channel and spawn a goproc with something like this function to feed it; then have the server pull addresses from that channel
 	for ip := dhcp4.IPAdd(d.guestPool.IP, 1); d.guestPool.Contains(ip); ip = dhcp4.IPAdd(ip, 1) {
-		//fmt.Println(ip.String())
+		//log.Println(ip.String())
 		response, _ := d.etcdClient.Get("dhcp/"+ip.String(), false, false)
 		if response == nil || response.Node == nil { // this means that the IP is not already occupied
 			return ip
@@ -321,16 +322,16 @@ func (d *DHCPService) maintainDNSRecords(mac net.HardwareAddr, ip net.IP, packet
 			ipHash := fmt.Sprintf("%x", sha1.Sum([]byte(ip.String())))     // hash the IP address so we can have a unique key name (no other reason for this, honestly)
 			pathParts := strings.Split(strings.TrimSuffix(host, "."), ".") // breakup the name
 			queryPath := strings.Join(reverseSlice(pathParts), "/")        // reverse and join them with a slash delimiter
-			fmt.Printf("Wanting to register against %s/%s\n", queryPath, name)
+			log.Printf("Wanting to register against %s/%s\n", queryPath, name)
 			d.etcdClient.Set("dns/"+queryPath+"/@a/val/"+ipHash, ip.String(), uint64(d.leaseDuration.Seconds()+0.5))
 			hostHash := fmt.Sprintf("%x", sha1.Sum([]byte(host))) // hash the hostname so we can have a unique key name (no other reason for this, honestly)
 			slashedIP := strings.Replace(ip.To4().String(), ".", "/", -1)
 			d.etcdClient.Set("dns/arpa/in-addr/"+slashedIP+"/@ptr/val/"+hostHash, host, uint64(d.leaseDuration.Seconds()+0.5))
 		} else {
-			fmt.Println(">> No host name")
+			log.Println(">> No host name")
 		}
 	} else {
-		fmt.Println(">> No domain name")
+		log.Println(">> No domain name")
 	}
 }
 
@@ -339,7 +340,7 @@ func (d *DHCPService) getOptionsFromMAC(mac net.HardwareAddr) dhcp4.Options {
 
 	for i := range d.defaultOptions {
 		options[i] = d.defaultOptions[i]
-		fmt.Printf("OPTION:[%d][%+v]\n", i, d.defaultOptions[i])
+		log.Printf("OPTION:[%d][%+v]\n", i, d.defaultOptions[i])
 	}
 
 	{ // Subnet Mask
