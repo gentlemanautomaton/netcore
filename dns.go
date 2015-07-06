@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"net"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -55,6 +56,25 @@ func dnsQueryServe(cfg *Config, etc *etcd.Client, w dns.ResponseWriter, req *dns
 	answerMsg.Rcode = dns.RcodeSuccess
 	answerMsg.Extra = []dns.RR{}
 	answerTTL := uint32(10800) // this is the default TTL = 3 hours
+
+	// is this a WOL query?
+	wolMatcher := regexp.MustCompile(`^_wol\.`)
+	log.Printf("WOL TEST: %s %s %s", dns.Class(q.Qclass).String(), dns.Type(q.Qtype).String(), q.Name)
+	if q.Qclass == dns.ClassINET && q.Qtype == dns.TypeTXT && wolMatcher.MatchString(q.Name) {
+		log.Printf("THIS IS WOL!")
+		hostname := wolMatcher.ReplaceAllString(q.Name, "")
+		err := wakeByHostname(etc, hostname)
+		status := "OKAY"
+		if err != nil {
+			status = err.Error()
+		}
+		answer := new(dns.TXT)
+		answer.Header().Name = q.Name
+		answer.Header().Rrtype = dns.TypeTXT
+		answer.Header().Class = dns.ClassINET
+		answer.Txt = []string{status}
+		answerMsg.Answer = append(answerMsg.Answer, answer)
+	}
 
 	var key string
 	var wouldLikeForwarder bool
