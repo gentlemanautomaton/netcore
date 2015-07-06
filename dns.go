@@ -59,10 +59,9 @@ func dnsQueryServe(cfg *Config, etc *etcd.Client, w dns.ResponseWriter, req *dns
 
 	// is this a WOL query?
 	wolMatcher := regexp.MustCompile(`^_wol\.`)
-	log.Printf("WOL TEST: %s %s %s", dns.Class(q.Qclass).String(), dns.Type(q.Qtype).String(), q.Name)
 	if q.Qclass == dns.ClassINET && q.Qtype == dns.TypeTXT && wolMatcher.MatchString(q.Name) {
-		log.Printf("THIS IS WOL!")
 		hostname := wolMatcher.ReplaceAllString(q.Name, "")
+		log.Printf("WoL requested for %s", hostname)
 		err := wakeByHostname(etc, hostname)
 		status := "OKAY"
 		if err != nil {
