@@ -1,8 +1,9 @@
 package main
 
 import (
-	"fmt"
+	"log"
 	"net"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -12,7 +13,7 @@ import (
 )
 
 func dnsSetup(cfg *Config, etc *etcd.Client) chan error {
-	fmt.Println("DNSSETUP")
+	log.Println("DNSSETUP")
 
 	dns.HandleFunc(".", func(w dns.ResponseWriter, req *dns.Msg) { dnsQueryServe(cfg, etc, w, req) })
 	etc.CreateDir("dns", 0)
@@ -36,11 +37,11 @@ func dnsQueryServe(cfg *Config, etc *etcd.Client, w dns.ResponseWriter, req *dns
 	q := req.Question[0]
 
 	if req.MsgHdr.Response == true { // supposed responses sent to us are bogus
-		fmt.Printf("DNS Query IS BOGUS %s %s from %s.\n", q.Name, dns.Type(q.Qtype).String(), w.RemoteAddr())
+		log.Printf("DNS Query IS BOGUS %s %s from %s.\n", q.Name, dns.Type(q.Qtype).String(), w.RemoteAddr())
 		return
 	}
 
-	fmt.Printf("DNS Query %s %s from %s.\n", q.Name, dns.Type(q.Qtype).String(), w.RemoteAddr())
+	log.Printf("DNS Query %s %s from %s.\n", q.Name, dns.Type(q.Qtype).String(), w.RemoteAddr())
 
 	// TODO: lookup in an in-memory cache (obeying TTLs!)
 
@@ -56,6 +57,24 @@ func dnsQueryServe(cfg *Config, etc *etcd.Client, w dns.ResponseWriter, req *dns
 	answerMsg.Extra = []dns.RR{}
 	answerTTL := uint32(10800) // this is the default TTL = 3 hours
 
+	// is this a WOL query?
+	wolMatcher := regexp.MustCompile(`^_wol\.`)
+	if q.Qclass == dns.ClassINET && q.Qtype == dns.TypeTXT && wolMatcher.MatchString(q.Name) {
+		hostname := wolMatcher.ReplaceAllString(q.Name, "")
+		log.Printf("WoL requested for %s", hostname)
+		err := wakeByHostname(etc, hostname)
+		status := "OKAY"
+		if err != nil {
+			status = err.Error()
+		}
+		answer := new(dns.TXT)
+		answer.Header().Name = q.Name
+		answer.Header().Rrtype = dns.TypeTXT
+		answer.Header().Class = dns.ClassINET
+		answer.Txt = []string{status}
+		answerMsg.Answer = append(answerMsg.Answer, answer)
+	}
+
 	var key string
 	var wouldLikeForwarder bool
 
@@ -64,12 +83,12 @@ recordLookup:
 		wouldLikeForwarder = true
 
 		//qType := dns.Type(q.Qtype).String() // query type
-		//fmt.Printf("[Lookup [%s] [%s]]\n", q.Name, qType)
+		//log.Printf("[Lookup [%s] [%s]]\n", q.Name, qType)
 
 		qType, response, err := queryEtcd(q, etc)
 
 		if err == nil && response != nil && response.Node != nil && len(response.Node.Nodes) > 0 {
-			//fmt.Printf("[Lookup [%s] [%s] (matched something)]\n", q.Name, qType)
+			//log.Printf("[Lookup [%s] [%s] (matched something)]\n", q.Name, qType)
 			wouldLikeForwarder = false
 			var vals *etcd.Node
 			meta := make(map[string]string)
@@ -107,7 +126,7 @@ recordLookup:
 				if vals != nil && vals.Nodes != nil {
 					for _, child := range vals.Nodes {
 						if child.Expiration != nil && child.Expiration.Unix() < time.Now().Unix() {
-							//fmt.Printf("[Lookup [%s] [%s] (is expired)]\n", q.Name, qType)
+							//log.Printf("[Lookup [%s] [%s] (is expired)]\n", q.Name, qType)
 							continue
 						}
 						if child.TTL > 0 && uint32(child.TTL) < answerTTL {
@@ -262,20 +281,20 @@ recordLookup:
 			parentKey := strings.Join(keyParts[0:i], "/")
 			{ // test for an SOA (which tells us we have authority)
 				parentKey := parentKey + "/@soa"
-				//fmt.Printf("PARENTKEY SOA: [%s]\n", parentKey)
+				//log.Printf("PARENTKEY SOA: [%s]\n", parentKey)
 				response, err := etc.Get(strings.ToLower(parentKey), false, false) // do the lookup
 				if err == nil && response != nil && response.Node != nil {
-					//fmt.Printf("PARENTKEY SOA EXISTS\n")
+					//log.Printf("PARENTKEY SOA EXISTS\n")
 					wouldLikeForwarder = false
 					break
 				}
 			}
 			{ // test for a DNAME which has special handling for aliasing of subdomains within
 				parentKey := parentKey + "/@dname"
-				//fmt.Printf("PARENTKEY DNAME: [%s]\n", parentKey)
+				//log.Printf("PARENTKEY DNAME: [%s]\n", parentKey)
 				response, err := etc.Get(strings.ToLower(parentKey), false, false) // do the lookup
 				if err == nil && response != nil && response.Node != nil {
-					fmt.Printf("DNAME EXISTS!  WE NEED TO HANDLE THIS CORRECTLY... FIXME\n")
+					log.Printf("DNAME EXISTS!  WE NEED TO HANDLE THIS CORRECTLY... FIXME\n")
 					wouldLikeForwarder = false
 					// FIXME!  THIS NEEDS TO HANDLE DNAME ALIASING CORRECTLY INSTEAD OF IGNORING IT...
 					break
@@ -286,7 +305,7 @@ recordLookup:
 
 	if wouldLikeForwarder {
 		//qType := dns.Type(q.Qtype).String() // query type
-		//fmt.Printf("[Forwarder Lookup [%s] [%s]]\n", q.Name, qType)
+		//log.Printf("[Forwarder Lookup [%s] [%s]]\n", q.Name, qType)
 
 		myReq := new(dns.Msg)
 		myReq.SetQuestion(q.Name, q.Qtype)
@@ -310,10 +329,10 @@ recordLookup:
 				// FIXME: Cache misses.  And cache hits, too.
 
 				if err != nil {
-					//fmt.Printf("[Forwarder Lookup [%s] [%s] failed: [%s]]\n", q.Name, qType, err)
-					fmt.Println(err)
+					//log.Printf("[Forwarder Lookup [%s] [%s] failed: [%s]]\n", q.Name, qType, err)
+					log.Println(err)
 				} else {
-					//fmt.Printf("[Forwarder Lookup [%s] [%s] success]\n", q.Name, qType)
+					//log.Printf("[Forwarder Lookup [%s] [%s] success]\n", q.Name, qType)
 					for _, answer := range m.Answer {
 						answerMsg.Answer = append(answerMsg.Answer, answer)
 					}
@@ -324,7 +343,7 @@ recordLookup:
 	}
 
 	if len(answerMsg.Answer) > 0 {
-		//fmt.Printf("OUR DATA: [%+v]\n", answerMsg)
+		//log.Printf("OUR DATA: [%+v]\n", answerMsg)
 		w.WriteMsg(answerMsg)
 
 		// TODO: cache the response locally in RAM?
@@ -332,7 +351,7 @@ recordLookup:
 		return
 	}
 
-	//fmt.Printf("NO DATA: [%+v]\n", answerMsg)
+	//log.Printf("NO DATA: [%+v]\n", answerMsg)
 
 	// if we got here, it means we didn't find what we were looking for.
 	failMsg := new(dns.Msg)
@@ -347,7 +366,7 @@ recordLookup:
 
 func queryEtcd(q dns.Question, etc *etcd.Client) (string, *etcd.Response, error) {
 	qType := dns.Type(q.Qtype).String() // query type
-	//fmt.Printf("[Lookup [%s] [%s]]\n", q.Name, qType)
+	//log.Printf("[Lookup [%s] [%s]]\n", q.Name, qType)
 	keyRoot := fqdnToKey(q.Name)
 
 	// Always attempt CNAME lookup first
@@ -355,14 +374,14 @@ func queryEtcd(q dns.Question, etc *etcd.Client) (string, *etcd.Response, error)
 	response, err := etc.Get(key, true, true) // do the lookup
 	if err == nil && response != nil && response.Node != nil && len(response.Node.Nodes) > 0 {
 		// FIXME: Check for infinite recursion?
-		//fmt.Printf("[Lookup [%s] [%s] (altered)]\n", q.Name, qType)
+		//log.Printf("[Lookup [%s] [%s] (altered)]\n", q.Name, qType)
 		return "CNAME", response, err
 	}
 
 	// Look up the requested RR type
 	key = keyRoot + "/@" + strings.ToLower(qType) // structure the lookup key
 	response, err = etc.Get(key, true, true)      // do the lookup
-	//fmt.Printf("[Lookup [%s] [%s] (normal lookup) %s]\n", q.Name, qType, key)
+	//log.Printf("[Lookup [%s] [%s] (normal lookup) %s]\n", q.Name, qType, key)
 	return qType, response, err
 }
 

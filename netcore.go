@@ -2,7 +2,7 @@ package main
 
 import (
 	"flag"
-	"fmt"
+	"log"
 	"os"
 )
 
@@ -15,36 +15,36 @@ func init() {
 func main() {
 	etc := etcdSetup(*etcdServers)
 
-	fmt.Println("PRECONFIG")
+	log.Println("PRECONFIG")
 	cfg, err := getConfig(etc)
-	fmt.Println("POSTCONFIG")
+	log.Println("POSTCONFIG")
 
 	if err != nil {
-		fmt.Printf("Configuration failed: %s\n", err)
+		log.Printf("Configuration failed: %s\n", err)
 		os.Exit(1)
 	}
 
 	var dhcpExit chan error
 	if cfg.DHCPIP() == nil {
-		fmt.Println("DHCP service is disabled; this machine does not have a DHCP IP assigned.")
+		log.Println("DHCP service is disabled; this machine does not have a DHCP IP assigned.")
 	} else if cfg.DHCPSubnet() == nil {
-		fmt.Println("DHCP service is disabled; this machine's zone does not have a DHCP subnet assigned.")
+		log.Println("DHCP service is disabled; this machine's zone does not have a DHCP subnet assigned.")
 	} else if cfg.DHCPNIC() == "" {
-		fmt.Println("DHCP service is disabled; this machine does not have a DHCP NIC assigned.")
+		log.Println("DHCP service is disabled; this machine does not have a DHCP NIC assigned.")
 	} else {
 		dhcpExit = dhcpSetup(cfg, etc)
 	}
 
 	dnsExit := dnsSetup(cfg, etc)
 
-	fmt.Println("NETCORE Started.")
+	log.Println("NETCORE Started.")
 
 	select {
 	case err := <-dhcpExit:
-		fmt.Printf("DHCP Exited: %s\n", err)
+		log.Printf("DHCP Exited: %s\n", err)
 		os.Exit(1)
 	case err := <-dnsExit:
-		fmt.Printf("DNS Exited: %s\n", err)
+		log.Printf("DNS Exited: %s\n", err)
 		os.Exit(1)
 	}
 }
