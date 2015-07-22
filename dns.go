@@ -68,7 +68,7 @@ recordLookup:
 		//qType := dns.Type(q.Qtype).String() // query type
 		//log.Printf("[Lookup [%s] [%s]]\n", q.Name, qType)
 
-		qType, response, err := queryEtcd(q, etc)
+		key, qType, response, err := queryEtcd(q, etc)
 
 		if err == nil && response != nil && response.Node != nil && len(response.Node.Nodes) > 0 {
 			//log.Printf("[Lookup [%s] [%s] (matched something)]\n", q.Name, qType)
@@ -437,7 +437,7 @@ func forwardQuestion(q dns.Question, answerMsg *dns.Msg, forwarders []string) {
 	}
 }
 
-func queryEtcd(q dns.Question, etc *etcd.Client) (string, *etcd.Response, error) {
+func queryEtcd(q dns.Question, etc *etcd.Client) (string, string, *etcd.Response, error) {
 	qType := dns.Type(q.Qtype).String() // query type
 	//log.Printf("[Lookup [%s] [%s]]\n", q.Name, qType)
 	keyRoot := fqdnToKey(q.Name)
@@ -450,14 +450,14 @@ func queryEtcd(q dns.Question, etc *etcd.Client) (string, *etcd.Response, error)
 	if err == nil && response != nil && response.Node != nil && len(response.Node.Nodes) > 0 {
 		// FIXME: Check for infinite recursion?
 		//log.Printf("[Lookup [%s] [%s] (altered)]\n", q.Name, qType)
-		return "CNAME", response, err
+		return key, "CNAME", response, err
 	}
 
 	// Look up the requested RR type
 	key = keyRoot + "/@" + strings.ToLower(qType) // structure the lookup key
 	response, err = etc.Get(key, true, true)      // do the lookup
 	//log.Printf("[Lookup [%s] [%s] (normal lookup) %s]\n", q.Name, qType, key)
-	return qType, response, err
+	return key, qType, response, err
 }
 
 func fqdnToKey(fqdn string) string {
