@@ -181,6 +181,7 @@ func answerQuestion(cfg *Config, etc *etcd.Client, q dns.Question, answerTTL uin
 
 	// check to see if we host this zone; if yes, don't allow use of ext forwarders
 	// ... also, check to see if we hit a DNAME so we can handle that aliasing
+	// FIXME: Only forward if we are configured as a forwarder
 	if wouldLikeForwarder && !haveAuthority(key, etc) {
 		answers = append(answers, forwardQuestion(q, cfg.DNSForwarders())...)
 	}
