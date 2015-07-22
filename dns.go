@@ -34,59 +34,53 @@ func dnsSetup(cfg *Config, etc *etcd.Client) chan error {
 //        of being broken out into neat little chunks as one would have expected.  Shouldn't stay this way.
 
 func dnsQueryServe(cfg *Config, etc *etcd.Client, w dns.ResponseWriter, req *dns.Msg) {
-	// FIXME: Support multiple questions
-	q := req.Question[0]
-
 	if req.MsgHdr.Response == true { // supposed responses sent to us are bogus
+		q := req.Question[0]
 		log.Printf("DNS Query IS BOGUS %s %s from %s.\n", q.Name, dns.Type(q.Qtype).String(), w.RemoteAddr())
 		return
 	}
 
-	log.Printf("DNS Query %s %s from %s.\n", q.Name, dns.Type(q.Qtype).String(), w.RemoteAddr())
-
-	// TODO: lookup in an in-memory cache (obeying TTLs!)
-
 	// TODO: handle AXFR/IXFR (full and incremental) *someday* for use by non-netcore slaves
 	//       ... also if we do that, also handle sending NOTIFY to listed slaves attached to the SOA record
 
-	answerMsg := prepareAnswerMsg(req)
+	// FIXME: Make the default TTL into a configuration parameter
 	defaultTTL := uint32(10800) // this is the default TTL = 3 hours
 
-	answerQuestion(cfg, etc, q, answerMsg, defaultTTL)
+	var answers []dns.RR
 
-	if len(answerMsg.Answer) > 0 {
-		//log.Printf("OUR DATA: [%+v]\n", answerMsg)
-		w.WriteMsg(answerMsg)
-
+	for i, q := range req.Question {
+		log.Printf("DNS Query [%d/%d] %s %s from %s.\n", i, len(req.Question), q.Name, dns.Type(q.Qtype).String(), w.RemoteAddr())
+		// TODO: lookup in an in-memory cache (obeying TTLs!)
+		answers = append(answers, answerQuestion(cfg, etc, q, defaultTTL)...)
 		// TODO: Cache the response locally in RAM?
-		// Question: Should the cache be per-answer?
+	}
 
+	if len(answers) > 0 {
+		//log.Printf("OUR DATA: [%+v]\n", answerMsg)
+		answerMsg := prepareAnswerMsg(req, answers)
+		w.WriteMsg(answerMsg)
 		return
 	}
 
 	//log.Printf("NO DATA: [%+v]\n", answerMsg)
 
-	// if we got here, it means we didn't find what we were looking for.
-	failMsg := new(dns.Msg)
-	failMsg.Id = req.Id
-	failMsg.Response = true
-	failMsg.Authoritative = true
-	failMsg.Question = req.Question
-	failMsg.Rcode = dns.RcodeNameError
+	failMsg := prepareFailureMsg(req)
 	w.WriteMsg(failMsg)
 }
 
-func answerQuestion(cfg *Config, etc *etcd.Client, q dns.Question, answerMsg *dns.Msg, answerTTL uint32) {
+func answerQuestion(cfg *Config, etc *etcd.Client, q dns.Question, answerTTL uint32) []dns.RR {
+	var answers []dns.RR
+
 	// is this a WOL query?
 	if isWOLTrigger(q) {
 		answer := processWOL(etc, q)
-		answerMsg.Answer = append(answerMsg.Answer, answer)
+		answers = append(answers, answer)
 	}
-
-	var wouldLikeForwarder = true
 
 	//qType := dns.Type(q.Qtype).String() // query type
 	//log.Printf("[Lookup [%s] [%s]]\n", q.Name, qType)
+
+	var wouldLikeForwarder = true
 
 	key, qType, response, err := queryEtcd(q, etc)
 
@@ -112,7 +106,7 @@ func answerQuestion(cfg *Config, etc *etcd.Client, q dns.Question, answerMsg *dn
 		switch qType {
 		case "SOA":
 			answer := answerSOA(q, answerTTL, meta)
-			answerMsg.Answer = append(answerMsg.Answer, answer)
+			answers = append(answers, answer)
 		default:
 			// ... for answers that have values
 			if vals != nil && vals.Nodes != nil {
@@ -138,39 +132,39 @@ func answerQuestion(cfg *Config, etc *etcd.Client, q dns.Question, answerMsg *dn
 					//        http://en.wikipedia.org/wiki/List_of_DNS_record_types
 					case "TXT":
 						answer := answerTXT(q, child)
-						answerMsg.Answer = append(answerMsg.Answer, answer)
+						answers = append(answers, answer)
 					case "A":
 						answer := answerA(q, child)
-						answerMsg.Answer = append(answerMsg.Answer, answer)
+						answers = append(answers, answer)
 					case "AAAA":
 						answer := answerAAAA(q, child)
-						answerMsg.Answer = append(answerMsg.Answer, answer)
+						answers = append(answers, answer)
 					case "NS":
 						answer := answerNS(q, child)
-						answerMsg.Answer = append(answerMsg.Answer, answer)
+						answers = append(answers, answer)
 					case "CNAME":
 						answer, target := answerCNAME(q, child)
-						answerMsg.Answer = append(answerMsg.Answer, answer)
+						answers = append(answers, answer)
 						q.Name = target // replace question's name with new name
-						answerQuestion(cfg, etc, q, answerMsg, answerTTL)
-						return
+						answers = append(answers, answerQuestion(cfg, etc, q, answerTTL)...)
+						return answers
 					case "DNAME":
 						answer := answerDNAME(q, child)
-						answerMsg.Answer = append(answerMsg.Answer, answer)
+						answers = append(answers, answer)
 						wouldLikeForwarder = true
 					case "PTR":
 						answer := answerPTR(q, child)
-						answerMsg.Answer = append(answerMsg.Answer, answer)
+						answers = append(answers, answer)
 					case "MX":
 						answer := answerMX(q, child, attr)
 						// FIXME: are we supposed to be returning these in prio ordering?
 						//        ... or maybe it does that for us?  or maybe it's the enduser's problem?
-						answerMsg.Answer = append(answerMsg.Answer, answer)
+						answers = append(answers, answer)
 					case "SRV":
 						answer := answerSRV(q, child, attr)
 						// FIXME: are we supposed to be returning these rando-weighted and in priority ordering?
 						//        ... or maybe it does that for us?  or maybe it's the enduser's problem?
-						answerMsg.Answer = append(answerMsg.Answer, answer)
+						answers = append(answers, answer)
 					case "SSHFP":
 						// TODO: implement SSHFP
 						//       http://godoc.org/github.com/miekg/dns#SSHFP
@@ -181,57 +175,39 @@ func answerQuestion(cfg *Config, etc *etcd.Client, q dns.Question, answerMsg *dn
 		}
 	}
 
-	// FIXME: This should only update the TTL for answers related to this query.
-	//        When we move to answering multiple questions this will produce
-	//        unwanted side effects.
-	for _, answer := range answerMsg.Answer {
+	for _, answer := range answers {
 		answer.Header().Ttl = answerTTL // FIXME: I think this might be inappropriate
 	}
 
 	// check to see if we host this zone; if yes, don't allow use of ext forwarders
 	// ... also, check to see if we hit a DNAME so we can handle that aliasing
-	{
-		keyParts := strings.Split(key, "/")
-		for i := len(keyParts) - 1; wouldLikeForwarder && i > 2; i-- {
-			parentKey := strings.Join(keyParts[0:i], "/")
-			{ // test for an SOA (which tells us we have authority)
-				parentKey := parentKey + "/@soa"
-				//log.Printf("PARENTKEY SOA: [%s]\n", parentKey)
-				response, err := etc.Get(strings.ToLower(parentKey), false, false) // do the lookup
-				if err == nil && response != nil && response.Node != nil {
-					//log.Printf("PARENTKEY SOA EXISTS\n")
-					wouldLikeForwarder = false
-					break
-				}
-			}
-			{ // test for a DNAME which has special handling for aliasing of subdomains within
-				parentKey := parentKey + "/@dname"
-				//log.Printf("PARENTKEY DNAME: [%s]\n", parentKey)
-				response, err := etc.Get(strings.ToLower(parentKey), false, false) // do the lookup
-				if err == nil && response != nil && response.Node != nil {
-					log.Printf("DNAME EXISTS!  WE NEED TO HANDLE THIS CORRECTLY... FIXME\n")
-					wouldLikeForwarder = false
-					// FIXME!  THIS NEEDS TO HANDLE DNAME ALIASING CORRECTLY INSTEAD OF IGNORING IT...
-					break
-				}
-			}
-		}
+	if wouldLikeForwarder && !haveAuthority(key, etc) {
+		answers = append(answers, forwardQuestion(q, cfg.DNSForwarders())...)
 	}
 
-	if wouldLikeForwarder {
-		forwardQuestion(q, answerMsg, cfg.DNSForwarders())
-	}
+	return answers
 }
 
-func prepareAnswerMsg(req *dns.Msg) *dns.Msg {
+func prepareAnswerMsg(req *dns.Msg, answers []dns.RR) *dns.Msg {
 	answerMsg := new(dns.Msg)
 	answerMsg.Id = req.Id
 	answerMsg.Response = true
 	answerMsg.Authoritative = true
 	answerMsg.Question = req.Question
+	answerMsg.Answer = answers
 	answerMsg.Rcode = dns.RcodeSuccess
 	answerMsg.Extra = []dns.RR{}
 	return answerMsg
+}
+
+func prepareFailureMsg(req *dns.Msg) *dns.Msg {
+	failMsg := new(dns.Msg)
+	failMsg.Id = req.Id
+	failMsg.Response = true
+	failMsg.Authoritative = true
+	failMsg.Question = req.Question
+	failMsg.Rcode = dns.RcodeNameError
+	return failMsg
 }
 
 func isWOLTrigger(q dns.Question) bool {
@@ -400,7 +376,36 @@ func answerSRV(q dns.Question, node *etcd.Node, attr map[string]string) dns.RR {
 	return answer
 }
 
-func forwardQuestion(q dns.Question, answerMsg *dns.Msg, forwarders []string) {
+// haveAuthority returns true if we are an authority for the zone containing
+// the given key
+func haveAuthority(key string, etc *etcd.Client) bool {
+	keyParts := strings.Split(key, "/")
+	for i := len(keyParts) - 1; i > 2; i-- {
+		parentKey := strings.Join(keyParts[0:i], "/")
+		{ // test for an SOA (which tells us we have authority)
+			parentKey := parentKey + "/@soa"
+			//log.Printf("PARENTKEY SOA: [%s]\n", parentKey)
+			response, err := etc.Get(strings.ToLower(parentKey), false, false) // do the lookup
+			if err == nil && response != nil && response.Node != nil {
+				//log.Printf("PARENTKEY SOA EXISTS\n")
+				return true
+			}
+		}
+		{ // test for a DNAME which has special handling for aliasing of subdomains within
+			parentKey := parentKey + "/@dname"
+			//log.Printf("PARENTKEY DNAME: [%s]\n", parentKey)
+			response, err := etc.Get(strings.ToLower(parentKey), false, false) // do the lookup
+			if err == nil && response != nil && response.Node != nil {
+				// FIXME!  THIS NEEDS TO HANDLE DNAME ALIASING CORRECTLY INSTEAD OF IGNORING IT...
+				log.Printf("DNAME EXISTS!  WE NEED TO HANDLE THIS CORRECTLY... FIXME\n")
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func forwardQuestion(q dns.Question, forwarders []string) []dns.RR {
 	//qType := dns.Type(q.Qtype).String() // query type
 	//log.Printf("[Forwarder Lookup [%s] [%s]]\n", q.Name, qType)
 
@@ -429,13 +434,11 @@ func forwardQuestion(q dns.Question, answerMsg *dns.Msg, forwarders []string) {
 				log.Println(err)
 			} else {
 				//log.Printf("[Forwarder Lookup [%s] [%s] success]\n", q.Name, qType)
-				for _, answer := range m.Answer {
-					answerMsg.Answer = append(answerMsg.Answer, answer)
-				}
-				break // because we're done here
+				return m.Answer
 			}
 		}
 	}
+	return nil
 }
 
 func queryEtcd(q dns.Question, etc *etcd.Client) (string, string, *etcd.Response, error) {
