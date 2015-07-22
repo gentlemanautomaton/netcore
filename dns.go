@@ -50,118 +50,140 @@ func dnsQueryServe(cfg *Config, etc *etcd.Client, w dns.ResponseWriter, req *dns
 	//       ... also if we do that, also handle sending NOTIFY to listed slaves attached to the SOA record
 
 	answerMsg := prepareAnswerMsg(req)
-	answerTTL := uint32(10800) // this is the default TTL = 3 hours
+	defaultTTL := uint32(10800) // this is the default TTL = 3 hours
 
+	answerQuestion(cfg, etc, q, answerMsg, defaultTTL)
+
+	if len(answerMsg.Answer) > 0 {
+		//log.Printf("OUR DATA: [%+v]\n", answerMsg)
+		w.WriteMsg(answerMsg)
+
+		// TODO: Cache the response locally in RAM?
+		// Question: Should the cache be per-answer?
+
+		return
+	}
+
+	//log.Printf("NO DATA: [%+v]\n", answerMsg)
+
+	// if we got here, it means we didn't find what we were looking for.
+	failMsg := new(dns.Msg)
+	failMsg.Id = req.Id
+	failMsg.Response = true
+	failMsg.Authoritative = true
+	failMsg.Question = req.Question
+	failMsg.Rcode = dns.RcodeNameError
+	w.WriteMsg(failMsg)
+}
+
+func answerQuestion(cfg *Config, etc *etcd.Client, q dns.Question, answerMsg *dns.Msg, answerTTL uint32) {
 	// is this a WOL query?
 	if isWOLTrigger(q) {
 		answer := processWOL(etc, q)
 		answerMsg.Answer = append(answerMsg.Answer, answer)
 	}
 
-	var key string
-	var wouldLikeForwarder bool
+	var wouldLikeForwarder = true
 
-recordLookup:
-	{
-		wouldLikeForwarder = true
+	//qType := dns.Type(q.Qtype).String() // query type
+	//log.Printf("[Lookup [%s] [%s]]\n", q.Name, qType)
 
-		//qType := dns.Type(q.Qtype).String() // query type
-		//log.Printf("[Lookup [%s] [%s]]\n", q.Name, qType)
+	key, qType, response, err := queryEtcd(q, etc)
 
-		key, qType, response, err := queryEtcd(q, etc)
-
-		if err == nil && response != nil && response.Node != nil && len(response.Node.Nodes) > 0 {
-			//log.Printf("[Lookup [%s] [%s] (matched something)]\n", q.Name, qType)
-			wouldLikeForwarder = false
-			var vals *etcd.Node
-			meta := make(map[string]string)
-			for _, node := range response.Node.Nodes {
-				nodeKey := strings.Replace(node.Key, key+"/", "", 1)
-				if nodeKey == "val" && node.Dir {
-					vals = node
-				} else if !node.Dir {
-					meta[nodeKey] = node.Value // NOTE: the keys are case-sensitive
-				}
+	if err == nil && response != nil && response.Node != nil && len(response.Node.Nodes) > 0 {
+		//log.Printf("[Lookup [%s] [%s] (matched something)]\n", q.Name, qType)
+		wouldLikeForwarder = false
+		var vals *etcd.Node
+		meta := make(map[string]string)
+		for _, node := range response.Node.Nodes {
+			nodeKey := strings.Replace(node.Key, key+"/", "", 1)
+			if nodeKey == "val" && node.Dir {
+				vals = node
+			} else if !node.Dir {
+				meta[nodeKey] = node.Value // NOTE: the keys are case-sensitive
 			}
+		}
 
-			gotTTL, _ := strconv.Atoi(meta["TTL"])
-			if gotTTL > 0 {
-				answerTTL = uint32(gotTTL)
-			}
+		gotTTL, _ := strconv.Atoi(meta["TTL"])
+		if gotTTL > 0 {
+			answerTTL = uint32(gotTTL)
+		}
 
-			switch qType {
-			case "SOA":
-				answer := answerSOA(q, answerTTL, meta)
-				answerMsg.Answer = append(answerMsg.Answer, answer)
-			default:
-				// ... for answers that have values
-				if vals != nil && vals.Nodes != nil {
-					for _, child := range vals.Nodes {
-						if child.Expiration != nil && child.Expiration.Unix() < time.Now().Unix() {
-							//log.Printf("[Lookup [%s] [%s] (is expired)]\n", q.Name, qType)
-							continue
+		switch qType {
+		case "SOA":
+			answer := answerSOA(q, answerTTL, meta)
+			answerMsg.Answer = append(answerMsg.Answer, answer)
+		default:
+			// ... for answers that have values
+			if vals != nil && vals.Nodes != nil {
+				for _, child := range vals.Nodes {
+					if child.Expiration != nil && child.Expiration.Unix() < time.Now().Unix() {
+						//log.Printf("[Lookup [%s] [%s] (is expired)]\n", q.Name, qType)
+						continue
+					}
+					if child.TTL > 0 && uint32(child.TTL) < answerTTL {
+						answerTTL = uint32(child.TTL)
+					}
+					attr := make(map[string]string)
+					if child.Nodes != nil {
+						for _, attrNode := range child.Nodes {
+							nodeKey := strings.Replace(attrNode.Key, child.Key+"/", "", 1)
+							attr[nodeKey] = attrNode.Value
 						}
-						if child.TTL > 0 && uint32(child.TTL) < answerTTL {
-							answerTTL = uint32(child.TTL)
-						}
-						attr := make(map[string]string)
-						if child.Nodes != nil {
-							for _, attrNode := range child.Nodes {
-								nodeKey := strings.Replace(attrNode.Key, child.Key+"/", "", 1)
-								attr[nodeKey] = attrNode.Value
-							}
-						}
+					}
 
-						switch qType {
-						// FIXME: Add more RR types!
-						//        http://godoc.org/github.com/miekg/dns has info as well as
-						//        http://en.wikipedia.org/wiki/List_of_DNS_record_types
-						case "TXT":
-							answer := answerTXT(q, child)
-							answerMsg.Answer = append(answerMsg.Answer, answer)
-						case "A":
-							answer := answerA(q, child)
-							answerMsg.Answer = append(answerMsg.Answer, answer)
-						case "AAAA":
-							answer := answerAAAA(q, child)
-							answerMsg.Answer = append(answerMsg.Answer, answer)
-						case "NS":
-							answer := answerNS(q, child)
-							answerMsg.Answer = append(answerMsg.Answer, answer)
-						case "CNAME":
-							answer, target := answerCNAME(q, child)
-							answerMsg.Answer = append(answerMsg.Answer, answer)
-							q.Name = target // replace question's name with new name
-							wouldLikeForwarder = true
-							goto recordLookup
-						case "DNAME":
-							answer := answerDNAME(q, child)
-							answerMsg.Answer = append(answerMsg.Answer, answer)
-							wouldLikeForwarder = true
-						case "PTR":
-							answer := answerPTR(q, child)
-							answerMsg.Answer = append(answerMsg.Answer, answer)
-						case "MX":
-							answer := answerMX(q, child, attr)
-							// FIXME: are we supposed to be returning these in prio ordering?
-							//        ... or maybe it does that for us?  or maybe it's the enduser's problem?
-							answerMsg.Answer = append(answerMsg.Answer, answer)
-						case "SRV":
-							answer := answerSRV(q, child, attr)
-							// FIXME: are we supposed to be returning these rando-weighted and in priority ordering?
-							//        ... or maybe it does that for us?  or maybe it's the enduser's problem?
-							answerMsg.Answer = append(answerMsg.Answer, answer)
-						case "SSHFP":
-							// TODO: implement SSHFP
-							//       http://godoc.org/github.com/miekg/dns#SSHFP
-							//       NOTE: we must implement DNSSEC before using this RR type
-						}
+					switch qType {
+					// FIXME: Add more RR types!
+					//        http://godoc.org/github.com/miekg/dns has info as well as
+					//        http://en.wikipedia.org/wiki/List_of_DNS_record_types
+					case "TXT":
+						answer := answerTXT(q, child)
+						answerMsg.Answer = append(answerMsg.Answer, answer)
+					case "A":
+						answer := answerA(q, child)
+						answerMsg.Answer = append(answerMsg.Answer, answer)
+					case "AAAA":
+						answer := answerAAAA(q, child)
+						answerMsg.Answer = append(answerMsg.Answer, answer)
+					case "NS":
+						answer := answerNS(q, child)
+						answerMsg.Answer = append(answerMsg.Answer, answer)
+					case "CNAME":
+						answer, target := answerCNAME(q, child)
+						answerMsg.Answer = append(answerMsg.Answer, answer)
+						q.Name = target // replace question's name with new name
+						answerQuestion(cfg, etc, q, answerMsg, answerTTL)
+						return
+					case "DNAME":
+						answer := answerDNAME(q, child)
+						answerMsg.Answer = append(answerMsg.Answer, answer)
+						wouldLikeForwarder = true
+					case "PTR":
+						answer := answerPTR(q, child)
+						answerMsg.Answer = append(answerMsg.Answer, answer)
+					case "MX":
+						answer := answerMX(q, child, attr)
+						// FIXME: are we supposed to be returning these in prio ordering?
+						//        ... or maybe it does that for us?  or maybe it's the enduser's problem?
+						answerMsg.Answer = append(answerMsg.Answer, answer)
+					case "SRV":
+						answer := answerSRV(q, child, attr)
+						// FIXME: are we supposed to be returning these rando-weighted and in priority ordering?
+						//        ... or maybe it does that for us?  or maybe it's the enduser's problem?
+						answerMsg.Answer = append(answerMsg.Answer, answer)
+					case "SSHFP":
+						// TODO: implement SSHFP
+						//       http://godoc.org/github.com/miekg/dns#SSHFP
+						//       NOTE: we must implement DNSSEC before using this RR type
 					}
 				}
 			}
 		}
 	}
 
+	// FIXME: This should only update the TTL for answers related to this query.
+	//        When we move to answering multiple questions this will produce
+	//        unwanted side effects.
 	for _, answer := range answerMsg.Answer {
 		answer.Header().Ttl = answerTTL // FIXME: I think this might be inappropriate
 	}
@@ -199,27 +221,6 @@ recordLookup:
 	if wouldLikeForwarder {
 		forwardQuestion(q, answerMsg, cfg.DNSForwarders())
 	}
-
-	if len(answerMsg.Answer) > 0 {
-		//log.Printf("OUR DATA: [%+v]\n", answerMsg)
-		w.WriteMsg(answerMsg)
-
-		// TODO: cache the response locally in RAM?
-
-		return
-	}
-
-	//log.Printf("NO DATA: [%+v]\n", answerMsg)
-
-	// if we got here, it means we didn't find what we were looking for.
-	failMsg := new(dns.Msg)
-	failMsg.Id = req.Id
-	failMsg.Response = true
-	failMsg.Authoritative = true
-	failMsg.Question = req.Question
-	failMsg.Rcode = dns.RcodeNameError
-	w.WriteMsg(failMsg)
-	return
 }
 
 func prepareAnswerMsg(req *dns.Msg) *dns.Msg {
