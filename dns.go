@@ -34,6 +34,7 @@ func dnsSetup(cfg *Config, etc *etcd.Client) chan error {
 //        of being broken out into neat little chunks as one would have expected.  Shouldn't stay this way.
 
 func dnsQueryServe(cfg *Config, etc *etcd.Client, w dns.ResponseWriter, req *dns.Msg) {
+	// FIXME: Support multiple questions
 	q := req.Question[0]
 
 	if req.MsgHdr.Response == true { // supposed responses sent to us are bogus
@@ -58,20 +59,8 @@ func dnsQueryServe(cfg *Config, etc *etcd.Client, w dns.ResponseWriter, req *dns
 	answerTTL := uint32(10800) // this is the default TTL = 3 hours
 
 	// is this a WOL query?
-	wolMatcher := regexp.MustCompile(`^_wol\.`)
-	if q.Qclass == dns.ClassINET && q.Qtype == dns.TypeTXT && wolMatcher.MatchString(q.Name) {
-		hostname := wolMatcher.ReplaceAllString(q.Name, "")
-		log.Printf("WoL requested for %s", hostname)
-		err := wakeByHostname(etc, hostname)
-		status := "OKAY"
-		if err != nil {
-			status = err.Error()
-		}
-		answer := new(dns.TXT)
-		answer.Header().Name = q.Name
-		answer.Header().Rrtype = dns.TypeTXT
-		answer.Header().Class = dns.ClassINET
-		answer.Txt = []string{status}
+	if isWOLTrigger(q) {
+		answer := processWOL(etc, q)
 		answerMsg.Answer = append(answerMsg.Answer, answer)
 	}
 
@@ -364,10 +353,38 @@ recordLookup:
 	return
 }
 
+func isWOLTrigger(q dns.Question) bool {
+	wolMatcher := regexp.MustCompile(`^_wol\.`)
+	return q.Qclass == dns.ClassINET && q.Qtype == dns.TypeTXT && wolMatcher.MatchString(q.Name)
+}
+
+func getWOLHostname(q dns.Question) string {
+	wolMatcher := regexp.MustCompile(`^_wol\.`)
+	return wolMatcher.ReplaceAllString(q.Name, "")
+}
+
+func processWOL(e *etcd.Client, q dns.Question) dns.RR {
+	hostname := getWOLHostname(q)
+	log.Printf("WoL requested for %s", hostname)
+	err := wakeByHostname(e, hostname)
+	status := "OKAY"
+	if err != nil {
+		status = err.Error()
+	}
+	answer := new(dns.TXT)
+	answer.Header().Name = q.Name
+	answer.Header().Rrtype = dns.TypeTXT
+	answer.Header().Class = dns.ClassINET
+	answer.Txt = []string{status}
+	return answer
+}
+
 func queryEtcd(q dns.Question, etc *etcd.Client) (string, *etcd.Response, error) {
 	qType := dns.Type(q.Qtype).String() // query type
 	//log.Printf("[Lookup [%s] [%s]]\n", q.Name, qType)
 	keyRoot := fqdnToKey(q.Name)
+
+	// TODO: Issue the CName and RR etcd queries simultaneously
 
 	// Always attempt CNAME lookup first
 	key := keyRoot + "/@cname"                // structure the lookup key
