@@ -437,9 +437,12 @@ func (d *DHCPService) getOptionsFromMAC(mac net.HardwareAddr) dhcp4.Options {
 }
 
 func (d *DHCPService) getValueFromMAC(mac net.HardwareAddr, key string) (string, bool) {
-	response, _ := d.etcdClient.Get("dhcp/"+mac.String()+"/"+key, false, false)
-	if response != nil && response.Node != nil {
-		return response.Node.Value, true
+	for len(mac) > 0 {
+		response, _ := d.etcdClient.Get("dhcp/"+mac.String()+"/"+key, false, false)
+		if response != nil && response.Node != nil {
+			return response.Node.Value, true
+		}
+		mac = mac[0 : len(mac)-1]
 	}
 	return "", false
 }
