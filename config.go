@@ -26,6 +26,7 @@ type Config struct {
 	dhcpNIC           string
 	dhcpSubnet        *net.IPNet
 	dhcpLeaseDuration time.Duration
+	dhcpTFTP          string
 	dnsForwarders     []string
 }
 
@@ -34,6 +35,7 @@ var setDHCPIP = flag.String("setDHCPIP", "", "Overwrite (permanently) the DHCP h
 var setDHCPNIC = flag.String("setDHCPNIC", "", "Overwrite (permanently) the DHCP hosting NIC name for this machine (or set it to empty to disable DHCP).")
 var setDHCPSubnet = flag.String("setDHCPSubnet", "", "Overwrite (permanently) the DHCP subnet for this zone (requires setZone flag or it'll no-op).")
 var setDHCPLeaseDuration = flag.String("setDHCPLeaseDuration", "", "Overwrite (permanently) the default DHCP lease duration for this zone (requires setZone flag or it'll no-op).")
+var setDHCPTFTP = flag.String("setDHCPTFTP", "", "Overwrite (permanently) the DHCP TFTP Server Name for this machine (or set it to empty to disable DHCP).")
 
 // ErrNoZone is an error returned during config init to indicate that the host has not been assigned to a zone in etcd keyed off of its hostname
 var ErrNoZone = errors.New("This host has not been assigned to a zone.")
@@ -202,6 +204,23 @@ func getConfig(etc *etcd.Client) (*Config, error) {
 		}
 	}
 
+	// DHCPTFTP
+	{
+		var response *etcd.Response
+		var err error
+		if setDHCPTFTP != nil && *setDHCPTFTP != "" {
+			response, err = etc.Set("config/"+cfg.hostname+"/dhcptftp", *setDHCPTFTP, 0)
+		} else {
+			response, err = etc.Get("config/"+cfg.hostname+"/dhcptftp", false, false)
+		}
+		if err != nil && !etcdKeyNotFound(err) {
+			return nil, err
+		}
+		if response != nil && response.Node != nil && response.Node.Value != "" {
+			cfg.dhcpTFTP = response.Node.Value
+		}
+	}
+
 	// DNSForwarders
 	{
 		cfg.dnsForwarders = []string{"8.8.8.8:53", "8.8.4.4:53"} // default uses Google's Public DNS servers
@@ -280,6 +299,13 @@ func (cfg *Config) DHCPLeaseDuration() time.Duration {
 	cfg.Lock()
 	defer cfg.Unlock()
 	return cfg.dhcpLeaseDuration
+}
+
+// DHCPTFTP returns the TFTP Server Name for this zone
+func (cfg *Config) DHCPTFTP() string {
+	cfg.Lock()
+	defer cfg.Unlock()
+	return cfg.dhcpTFTP
 }
 
 // DNSForwarders returns the list of DNS resolvers we use for recursive lookups

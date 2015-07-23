@@ -37,7 +37,7 @@ func dhcpSetup(cfg *Config, etc *etcd.Client) chan error {
 	etc.CreateDir("dhcp", 0)
 	exit := make(chan error, 1)
 	go func() {
-		exit <- dhcp4.ListenAndServeIf(cfg.DHCPNIC(), &DHCPService{
+		d := &DHCPService{
 			ip:            cfg.DHCPIP(),
 			leaseDuration: cfg.DHCPLeaseDuration(),
 			etcdClient:    etc,
@@ -49,7 +49,12 @@ func dhcpSetup(cfg *Config, etc *etcd.Client) chan error {
 				dhcp4.OptionRouter:           cfg.Gateway(),
 				dhcp4.OptionDomainNameServer: cfg.DHCPIP(),
 			},
-		})
+		}
+		dhcpTFTP := cfg.DHCPTFTP()
+		if dhcpTFTP != "" {
+			d.defaultOptions[dhcp4.OptionTFTPServerName] = []byte(dhcpTFTP)
+		}
+		exit <- dhcp4.ListenAndServeIf(cfg.DHCPNIC(), d)
 	}()
 	return exit
 }
@@ -414,6 +419,16 @@ func (d *DHCPService) getOptionsFromMAC(mac net.HardwareAddr) dhcp4.Options {
 				delete(options, dhcp4.OptionNetworkTimeProtocolServers)
 			} else {
 				options[dhcp4.OptionNetworkTimeProtocolServers] = []byte(value)
+			}
+		}
+	}
+
+	{ // TFTP Server
+		if value, ok := d.getValueFromMAC(mac, "tftp"); ok {
+			if value == "" {
+				delete(options, dhcp4.OptionTFTPServerName)
+			} else {
+				options[dhcp4.OptionTFTPServerName] = []byte(value)
 			}
 		}
 	}
