@@ -344,54 +344,49 @@ func (d *DHCPService) getOptionsFromMAC(mac net.HardwareAddr) dhcp4.Options {
 	}
 
 	{ // Subnet Mask
-		response, _ := d.etcdClient.Get("dhcp/"+mac.String()+"/mask", false, false)
-		if response != nil && response.Node != nil {
-			if response.Node.Value == "" {
+		if value, ok := d.getValueFromMAC(mac, "mask"); ok {
+			if value == "" {
 				delete(options, dhcp4.OptionSubnetMask)
 			} else {
-				options[dhcp4.OptionSubnetMask] = []byte(response.Node.Value)
+				options[dhcp4.OptionSubnetMask] = []byte(value)
 			}
 		}
 	}
 
 	{ // Gateway/Router
-		response, _ := d.etcdClient.Get("dhcp/"+mac.String()+"/gw", false, false)
-		if response != nil && response.Node != nil {
-			if response.Node.Value == "" {
+		if value, ok := d.getValueFromMAC(mac, "gw"); ok {
+			if value == "" {
 				delete(options, dhcp4.OptionRouter)
 			} else {
-				options[dhcp4.OptionRouter] = []byte(response.Node.Value)
+				options[dhcp4.OptionRouter] = []byte(value)
 			}
 		}
 	}
 
 	{ // Name Server
-		response, _ := d.etcdClient.Get("dhcp/"+mac.String()+"/ns", false, false)
-		if response != nil && response.Node != nil {
-			if response.Node.Value == "" {
+		if value, ok := d.getValueFromMAC(mac, "ns"); ok {
+			if value == "" {
 				delete(options, dhcp4.OptionDomainNameServer)
 			} else {
-				options[dhcp4.OptionDomainNameServer] = []byte(response.Node.Value)
+				options[dhcp4.OptionDomainNameServer] = []byte(value)
 			}
 		}
 	}
 
 	{ // Host Name
-		response, _ := d.etcdClient.Get("dhcp/"+mac.String()+"/name", false, false)
-		if response != nil && response.Node != nil {
-			if response.Node.Value == "" {
+		if value, ok := d.getValueFromMAC(mac, "name"); ok {
+			if value == "" {
 				delete(options, dhcp4.OptionHostName)
 			} else {
-				options[dhcp4.OptionHostName] = []byte(response.Node.Value)
+				options[dhcp4.OptionHostName] = []byte(value)
 			}
 		}
 	}
 
 	{ // Domain Name
-		response, _ := d.etcdClient.Get("dhcp/"+mac.String()+"/domain", false, false)
-		if response != nil && response.Node != nil {
-			if response.Node.Value != "" {
-				options[dhcp4.OptionDomainName] = []byte(response.Node.Value)
+		if value, ok := d.getValueFromMAC(mac, "domain"); ok {
+			if value != "" {
+				options[dhcp4.OptionDomainName] = []byte(value)
 			}
 		}
 		if len(options[dhcp4.OptionDomainName]) == 0 {
@@ -404,28 +399,34 @@ func (d *DHCPService) getOptionsFromMAC(mac net.HardwareAddr) dhcp4.Options {
 	}
 
 	{ // Broadcast Address
-		response, _ := d.etcdClient.Get("dhcp/"+mac.String()+"/broadcast", false, false)
-		if response != nil && response.Node != nil {
-			if response.Node.Value == "" {
+		if value, ok := d.getValueFromMAC(mac, "broadcast"); ok {
+			if value == "" {
 				delete(options, dhcp4.OptionBroadcastAddress)
 			} else {
-				options[dhcp4.OptionBroadcastAddress] = []byte(response.Node.Value)
+				options[dhcp4.OptionBroadcastAddress] = []byte(value)
 			}
 		}
 	}
 
 	{ // NTP Server
-		response, _ := d.etcdClient.Get("dhcp/"+mac.String()+"/ntp", false, false)
-		if response != nil && response.Node != nil {
-			if response.Node.Value == "" {
+		if value, ok := d.getValueFromMAC(mac, "ntp"); ok {
+			if value == "" {
 				delete(options, dhcp4.OptionNetworkTimeProtocolServers)
 			} else {
-				options[dhcp4.OptionNetworkTimeProtocolServers] = []byte(response.Node.Value)
+				options[dhcp4.OptionNetworkTimeProtocolServers] = []byte(value)
 			}
 		}
 	}
 
 	return options
+}
+
+func (d *DHCPService) getValueFromMAC(mac net.HardwareAddr, key string) (string, bool) {
+	response, _ := d.etcdClient.Get("dhcp/"+mac.String()+"/"+key, false, false)
+	if response != nil && response.Node != nil {
+		return response.Node.Value, true
+	}
+	return "", false
 }
 
 // ReplyPacket creates a reply packet that a Server would send to a client.
