@@ -49,7 +49,7 @@ func dnsQueryServe(cfg *Config, etc *etcd.Client, w dns.ResponseWriter, req *dns
 	var answers []dns.RR
 
 	for i, q := range req.Question {
-		log.Printf("DNS Query [%d/%d] %s %s from %s.\n", i, len(req.Question), q.Name, dns.Type(q.Qtype).String(), w.RemoteAddr())
+		log.Printf("DNS Query [%d/%d] %s %s from %s.\n", i+1, len(req.Question), q.Name, dns.Type(q.Qtype).String(), w.RemoteAddr())
 		// TODO: lookup in an in-memory cache (obeying TTLs!)
 		answers = append(answers, answerQuestion(cfg, etc, q, defaultTTL)...)
 		// TODO: Cache the response locally in RAM?
