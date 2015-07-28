@@ -77,8 +77,7 @@ func answerQuestion(cfg *Config, etc *etcd.Client, q dns.Question, answerTTL uin
 		answers = append(answers, answer)
 	}
 
-	//qType := dns.Type(q.Qtype).String() // query type
-	//log.Printf("[Lookup [%s] [%s]]\n", q.Name, qType)
+	//log.Printf("[Lookup [%s] [%s] %d]\n", q.Name, dns.Type(q.Qtype).String(), answerTTL)
 
 	var wouldLikeForwarder = true
 
@@ -243,8 +242,8 @@ func answerSOA(q dns.Question, ttl uint32, meta map[string]string) dns.RR {
 	answer.Header().Ttl = ttl
 	answer.Header().Rrtype = dns.TypeSOA
 	answer.Header().Class = dns.ClassINET
-	answer.Ns = strings.TrimSuffix(meta["NS"], ".") + "."
-	answer.Mbox = strings.TrimSuffix(meta["MBOX"], ".") + "."
+	answer.Ns = strings.TrimSuffix(meta["ns"], ".") + "."
+	answer.Mbox = strings.TrimSuffix(meta["mbox"], ".") + "."
 	answer.Serial = uint32(time.Now().Unix())
 	answer.Refresh = uint32(60) // only used for master->slave timing
 	answer.Retry = uint32(60)   // only used for master->slave timing
