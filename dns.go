@@ -98,7 +98,7 @@ func answerQuestion(cfg *Config, etc *etcd.Client, q dns.Question, answerTTL uin
 			}
 		}
 
-		gotTTL, _ := strconv.Atoi(meta["TTL"])
+		gotTTL, _ := strconv.Atoi(meta["ttl"])
 		if gotTTL > 0 {
 			answerTTL = uint32(gotTTL)
 		}
