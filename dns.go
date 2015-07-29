@@ -68,8 +68,10 @@ func dnsQueryServe(cfg *Config, etc *etcd.Client, w dns.ResponseWriter, req *dns
 	w.WriteMsg(failMsg)
 }
 
-func answerQuestion(cfg *Config, etc *etcd.Client, q dns.Question, answerTTL uint32) []dns.RR {
+func answerQuestion(cfg *Config, etc *etcd.Client, q dns.Question, defaultTTL uint32) []dns.RR {
+	answerTTL := defaultTTL
 	var answers []dns.RR
+	var secondaryAnswers []dns.RR
 
 	// is this a WOL query?
 	if isWOLTrigger(q) {
@@ -77,7 +79,7 @@ func answerQuestion(cfg *Config, etc *etcd.Client, q dns.Question, answerTTL uin
 		answers = append(answers, answer)
 	}
 
-	//log.Printf("[Lookup [%s] [%s] %d]\n", q.Name, dns.Type(q.Qtype).String(), answerTTL)
+	log.Printf("[Lookup [%s] [%s] %d]\n", q.Name, dns.Type(q.Qtype).String(), answerTTL)
 
 	var wouldLikeForwarder = true
 
@@ -100,6 +102,7 @@ func answerQuestion(cfg *Config, etc *etcd.Client, q dns.Question, answerTTL uin
 		gotTTL, _ := strconv.Atoi(meta["ttl"])
 		if gotTTL > 0 {
 			answerTTL = uint32(gotTTL)
+			log.Printf("[FOUND TTL [%s] [%s] %d]\n", q.Name, dns.Type(q.Qtype).String(), answerTTL)
 		}
 
 		switch qType {
@@ -144,9 +147,9 @@ func answerQuestion(cfg *Config, etc *etcd.Client, q dns.Question, answerTTL uin
 					case "CNAME":
 						answer, target := answerCNAME(q, child)
 						answers = append(answers, answer)
-						q.Name = target // replace question's name with new name
-						answers = append(answers, answerQuestion(cfg, etc, q, answerTTL)...)
-						return answers
+						q2 := q
+						q2.Name = target // replace question's name with new name
+						secondaryAnswers = append(secondaryAnswers, answerQuestion(cfg, etc, q2, defaultTTL)...)
 					case "DNAME":
 						answer := answerDNAME(q, child)
 						answers = append(answers, answer)
@@ -174,9 +177,13 @@ func answerQuestion(cfg *Config, etc *etcd.Client, q dns.Question, answerTTL uin
 		}
 	}
 
+	log.Printf("[APPLIED TTL [%s] [%s] %d]\n", q.Name, dns.Type(q.Qtype).String(), answerTTL)
 	for _, answer := range answers {
 		answer.Header().Ttl = answerTTL // FIXME: I think this might be inappropriate
 	}
+
+	// Append the results of secondary queries, such as the results of CNAME and DNAME records
+	answers = append(answers, secondaryAnswers...)
 
 	// check to see if we host this zone; if yes, don't allow use of ext forwarders
 	// ... also, check to see if we hit a DNAME so we can handle that aliasing
