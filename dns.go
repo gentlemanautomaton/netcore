@@ -30,9 +30,6 @@ func dnsSetup(cfg *Config, etc *etcd.Client) chan error {
 	return exit
 }
 
-// FIXME: I'm not particularly satisfied with how this file is operating.  It feels too monolithic instead
-//        of being broken out into neat little chunks as one would have expected.  Shouldn't stay this way.
-
 func dnsQueryServe(cfg *Config, etc *etcd.Client, w dns.ResponseWriter, req *dns.Msg) {
 	if req.MsgHdr.Response == true { // supposed responses sent to us are bogus
 		q := req.Question[0]
@@ -336,11 +333,11 @@ func answerMX(q dns.Question, node *etcd.Node, attr map[string]string) dns.RR {
 	answer.Header().Rrtype = dns.TypeMX
 	answer.Header().Class = dns.ClassINET
 	answer.Preference = 50 // default if not defined
-	priority, err := strconv.Atoi(attr["PRIORITY"])
+	priority, err := strconv.Atoi(attr["priority"])
 	if err == nil {
 		answer.Preference = uint16(priority)
 	}
-	if target, ok := attr["TARGET"]; ok {
+	if target, ok := attr["target"]; ok {
 		answer.Mx = strings.TrimSuffix(target, ".") + "."
 	} else if node.Value != "" { // allows for simplified setting
 		answer.Mx = strings.TrimSuffix(node.Value, ".") + "."
@@ -354,21 +351,21 @@ func answerSRV(q dns.Question, node *etcd.Node, attr map[string]string) dns.RR {
 	answer.Header().Rrtype = dns.TypeSRV
 	answer.Header().Class = dns.ClassINET
 	answer.Priority = 50 // default if not defined
-	priority, err := strconv.Atoi(attr["PRIORITY"])
+	priority, err := strconv.Atoi(attr["priority"])
 	if err == nil {
 		answer.Priority = uint16(priority)
 	}
 	answer.Weight = 50 // default if not defined
-	weight, err := strconv.Atoi(attr["WEIGHT"])
+	weight, err := strconv.Atoi(attr["weight"])
 	if err == nil {
 		answer.Weight = uint16(weight)
 	}
 	answer.Port = 0 // default if not defined
-	port, err := strconv.Atoi(attr["PORT"])
+	port, err := strconv.Atoi(attr["port"])
 	if err == nil {
 		answer.Port = uint16(port)
 	}
-	if target, ok := attr["TARGET"]; ok {
+	if target, ok := attr["target"]; ok {
 		answer.Target = strings.TrimSuffix(target, ".") + "."
 	} else if node.Value != "" { // allows for simplified setting
 		targetParts := strings.Split(node.Value, ":")
