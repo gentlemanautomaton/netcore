@@ -1,43 +1,32 @@
 package main
 
 import (
-	"errors"
 	"net"
-	"strings"
 
-	"github.com/coreos/go-etcd/etcd"
 	"github.com/sabhiram/go-wol"
 )
 
-func wakeByMAC(e *etcd.Client, mac string) error {
-	return wol.SendMagicPacket(mac, "255.255.255.255:9", "")
+func wakeByMAC(cfg *Config, mac net.HardwareAddr) error {
+	return wol.SendMagicPacket(mac.String(), "255.255.255.255:9", "")
 }
 
-func wakeByIP(e *etcd.Client, ip net.IP) error {
-	response, err := e.Get("/dhcp/"+ip.String(), false, false)
+func wakeByIP(cfg *Config, ip net.IP) error {
+	entry, err := cfg.db.GetIP(ip)
 	if err != nil {
 		return err
 	}
-	if response == nil || response.Node == nil {
-		err = errors.New("Not Found")
-	}
-	mac := response.Node.Value
-	return wakeByMAC(e, mac)
+	return wakeByMAC(cfg, entry.MAC)
 }
 
-func wakeByHostname(e *etcd.Client, hostname string) error {
-	pathParts := strings.Split(strings.TrimSuffix(hostname, "."), ".") // breakup the queryed name
-	queryPath := strings.Join(reverseSlice(pathParts), "/")            // reverse and join them with a slash delimiter
-	keyRoot := strings.ToLower("/dns/" + queryPath)
-	response, err := e.Get(keyRoot+"/@a/val", true, true)
+func wakeByHostname(cfg *Config, hostname string) error {
+	entry, err := cfg.db.GetDNS(hostname, "A")
 	if err == nil {
-		if response != nil && response.Node != nil && response.Node.Nodes != nil {
-			for _, node := range response.Node.Nodes {
-				ip := node.Value
-				err = wakeByIP(e, net.ParseIP(ip))
+		for i := range entry.Values {
+			ip := net.ParseIP(entry.Values[i].Value)
+			if ip != nil {
+				err = wakeByIP(cfg, ip) // FIXME: Make
 			}
-		} else {
-			err = errors.New("Not Found")
+			// FIXME: Find some better way of handling errors here?
 		}
 	}
 	return err
