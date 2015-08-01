@@ -129,9 +129,18 @@ func answerQuestion(cfg *Config, q *dns.Question, defaultTTL uint32) []dns.RR {
 			// ... for answers that have values
 			for i := range entry.Values {
 				value := &entry.Values[i]
-				if value.Expiration != nil && value.Expiration.Unix() < time.Now().Unix() {
-					//log.Printf("[Lookup [%s] [%s] (is expired)]\n", q.Name, qType)
-					continue
+				if value.Expiration != nil {
+					expiration := value.Expiration.Unix()
+					now := time.Now().Unix()
+					if expiration < now {
+						//log.Printf("[Lookup [%s] [%s] (is expired)]\n", q.Name, qType)
+						continue
+					}
+					remaining := uint32(expiration - now)
+					if remaining < answerTTL {
+						answerTTL = remaining
+						log.Printf("[TTL-BY-EXPIRATION [%s] [%s] %d]\n", q.Name, dns.Type(q.Qtype).String(), answerTTL)
+					}
 				}
 				if value.TTL > 0 && value.TTL < answerTTL {
 					answerTTL = value.TTL
