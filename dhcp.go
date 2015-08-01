@@ -1,9 +1,7 @@
 package main
 
 import (
-	"crypto/sha1"
 	"encoding/binary"
-	"fmt"
 	"log"
 	"net"
 	"strings"
@@ -307,14 +305,8 @@ func (d *DHCPService) maintainDNSRecords(entry *MACEntry, packet dhcp4.Packet, r
 		}
 		if name != "" {
 			host := strings.ToLower(strings.Join([]string{name, string(domain)}, "."))
-			ipHash := fmt.Sprintf("%x", sha1.Sum([]byte(entry.IP.String()))) // hash the IP address so we can have a unique key name (no other reason for this, honestly)
-			pathParts := strings.Split(strings.TrimSuffix(host, "."), ".")   // breakup the name
-			queryPath := strings.Join(reverseSlice(pathParts), "/")          // reverse and join them with a slash delimiter
-			log.Printf("Wanting to register against %s/%s\n", queryPath, name)
-			d.etcdClient.Set("dns/"+queryPath+"/@a/val/"+ipHash, entry.IP.String(), uint64(d.leaseDuration.Seconds()+0.5))
-			hostHash := fmt.Sprintf("%x", sha1.Sum([]byte(host))) // hash the hostname so we can have a unique key name (no other reason for this, honestly)
-			slashedIP := strings.Replace(entry.IP.To4().String(), ".", "/", -1)
-			d.etcdClient.Set("dns/arpa/in-addr/"+slashedIP+"/@ptr/val/"+hostHash, host, uint64(d.leaseDuration.Seconds()+0.5))
+			// TODO: Pick a TTL for the record and use it
+			d.db.RegisterA(host, entry.IP, false, 0, uint64(d.leaseDuration.Seconds()+0.5))
 		} else {
 			log.Println(">> No host name")
 		}

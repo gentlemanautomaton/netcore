@@ -14,6 +14,8 @@ import (
 type DNSDB interface {
 	InitDNS()
 	GetDNS(name string, rtype string) (*DNSEntry, error)
+	HasDNS(name string, rtype string) (bool, error)
+	RegisterA(fqdn string, ip net.IP, exclusive bool, ttl uint32, expiration uint64) error
 }
 
 type DNSEntry struct {
@@ -390,27 +392,21 @@ func answerSRV(q *dns.Question, v *DNSValue) dns.RR {
 // haveAuthority returns true if we are an authority for the zone containing
 // the given key
 func haveAuthority(cfg *Config, q *dns.Question) bool {
-	keyParts := strings.Split(key, "/")
-	for i := len(keyParts) - 1; i > 2; i-- {
-		parentKey := strings.Join(keyParts[0:i], "/")
-		{ // test for an SOA (which tells us we have authority)
-			parentKey := parentKey + "/@soa"
-			//log.Printf("PARENTKEY SOA: [%s]\n", parentKey)
-			response, err := etc.Get(strings.ToLower(parentKey), false, false) // do the lookup
-			if err == nil && response != nil && response.Node != nil {
-				//log.Printf("PARENTKEY SOA EXISTS\n")
-				return true
-			}
+	nameParts := strings.Split(strings.TrimSuffix(q.Name, "."), ".") // breakup the queryed name
+	// Check for authority at each level (but ignore the TLD)
+	for i := 0; i < len(nameParts)-1; i++ {
+		name := strings.Join(nameParts[i:], ".")
+		// Test for an SOA (which tells us we have authority)
+		found, err := cfg.db.HasDNS(name, "SOA")
+		if err == nil && found {
+			return true
 		}
-		{ // test for a DNAME which has special handling for aliasing of subdomains within
-			parentKey := parentKey + "/@dname"
-			//log.Printf("PARENTKEY DNAME: [%s]\n", parentKey)
-			response, err := etc.Get(strings.ToLower(parentKey), false, false) // do the lookup
-			if err == nil && response != nil && response.Node != nil {
-				// FIXME!  THIS NEEDS TO HANDLE DNAME ALIASING CORRECTLY INSTEAD OF IGNORING IT...
-				log.Printf("DNAME EXISTS!  WE NEED TO HANDLE THIS CORRECTLY... FIXME\n")
-				return true
-			}
+		// Test for a DNAME which has special handling for aliasing of subdomains within
+		found, err = cfg.db.HasDNS(name, "DNAME")
+		if err == nil && found {
+			// FIXME!  THIS NEEDS TO HANDLE DNAME ALIASING CORRECTLY INSTEAD OF IGNORING IT...
+			log.Printf("DNAME EXISTS!  WE NEED TO HANDLE THIS CORRECTLY... FIXME\n")
+			return true
 		}
 	}
 	return false

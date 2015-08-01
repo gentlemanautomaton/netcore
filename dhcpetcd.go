@@ -19,7 +19,11 @@ func (db EtcdDB) GetIP(ip net.IP) (IPEntry, error) {
 	if response == nil || response.Node == nil {
 		return IPEntry{}, errors.New("Not Found")
 	}
-	return IPEntry{}, nil
+	mac, err := net.ParseMAC(response.Node.Value)
+	if err != nil {
+		return IPEntry{}, err
+	}
+	return IPEntry{MAC: mac}, nil
 }
 
 func (db EtcdDB) HasIP(ip net.IP) bool {

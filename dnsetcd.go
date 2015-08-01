@@ -1,7 +1,11 @@
 package main
 
 import (
+	"crypto/sha1"
 	"errors"
+	"fmt"
+	"log"
+	"net"
 	"strconv"
 	"strings"
 
@@ -30,6 +34,60 @@ func (db EtcdDB) GetDNS(name string, rrType string) (*DNSEntry, error) {
 	}
 
 	return nil, errors.New("Not Found") // FIXME: Return a more proper error type
+}
+
+func (db EtcdDB) HasDNS(name string, rrType string) (bool, error) {
+	rrType = strings.ToLower(rrType)
+	key := etcdDNSKeyFromFQDN(name) + "/@" + rrType // structure the lookup key
+
+	response, err := db.client.Get(key, false, false) // do the lookup
+	if err != nil {
+		return false, err
+	}
+
+	if response != nil && response.Node != nil && response.Node.Dir {
+		return true, nil
+	}
+
+	return false, nil
+}
+
+func (db EtcdDB) RegisterA(fqdn string, ip net.IP, exclusive bool, ttl uint32, expiration uint64) error {
+	fqdn = cleanFQDN(fqdn)
+	ipString := ip.String()
+	ttlString := fmt.Sprintf("%d", ttl)
+	ipHash := fmt.Sprintf("%x", sha1.Sum([]byte(ipString))) // hash the IP address so we can have a unique key name (no other reason for this, honestly)
+	fqdnHash := fmt.Sprintf("%x", sha1.Sum([]byte(fqdn)))   // hash the hostname so we can have a unique key name (no other reason for this, honestly)
+
+	// Register the A record
+	aKey := etcdDNSKeyFromFQDN(fqdn) + "/@a"
+	log.Printf("[REGISTER] [%s %d] %s. %d IN A %s\n", aKey, expiration, fqdn, ttl, ipString)
+	_, err := db.client.Set(aKey+"/val/"+ipHash, ipString, expiration)
+	if err != nil {
+		return err
+	}
+	if ttl != 0 {
+		_, err := db.client.Set(aKey+"/ttl", ttlString, expiration)
+		if err != nil {
+			return err
+		}
+	}
+
+	// Register the PTR record
+	ptrKey := etcdDNSArpaKeyFromIP(ip) + "/@ptr"
+	log.Printf("[REGISTER] [%s %d] %s. %d IN A %s\n", ptrKey, expiration, fqdn, ttl, ipString)
+	_, err = db.client.Set(ptrKey+"/val/"+fqdnHash, fqdn, expiration)
+	if err != nil {
+		return err
+	}
+	if ttl != 0 {
+		_, err := db.client.Set(aKey+"/ttl", ttlString, expiration)
+		if err != nil {
+			return err
+		}
+	}
+
+	return err
 }
 
 func etcdNodeToDNSEntry(root *etcd.Node) *DNSEntry {
@@ -79,8 +137,18 @@ func etcdNodeToDNSValue(node *etcd.Node, value *DNSValue) {
 	}
 }
 
+func cleanFQDN(fqdn string) string {
+	return strings.ToLower(strings.TrimSuffix(fqdn, "."))
+}
+
 func etcdDNSKeyFromFQDN(fqdn string) string {
-	parts := strings.Split(strings.TrimSuffix(fqdn, "."), ".") // breakup the queryed name
-	path := strings.Join(reverseSlice(parts), "/")             // reverse and join them with a slash delimiter
-	return strings.ToLower("/dns/" + path)
+	parts := strings.Split(cleanFQDN(fqdn), ".")   // breakup the queryed name
+	path := strings.Join(reverseSlice(parts), "/") // reverse and join them with a slash delimiter
+	return "/dns/" + path
+}
+
+func etcdDNSArpaKeyFromIP(ip net.IP) string {
+	// FIXME: Support IPv6 addresses
+	slashedIP := strings.Replace(ip.To4().String(), ".", "/", -1)
+	return "dns/arpa/in-addr/" + slashedIP
 }
