@@ -162,11 +162,7 @@ func (db EtcdDB) GetConfig() (*Config, error) {
 			if err != nil {
 				return nil, err
 			}
-			dhcpLeaseDuration := time.Duration(value) * time.Minute
-			if err != nil {
-				return nil, err
-			}
-			cfg.dhcpLeaseDuration = dhcpLeaseDuration
+			cfg.dhcpLeaseDuration = time.Duration(value) * time.Minute
 		}
 	}
 
@@ -196,6 +192,38 @@ func (db EtcdDB) GetConfig() (*Config, error) {
 		}
 		if response != nil && response.Node != nil && response.Node.Value != "" {
 			cfg.dnsForwarders = strings.Split(",", response.Node.Value)
+		}
+	}
+
+	// dnsCacheMaxTTL
+	{
+		cfg.dnsCacheMaxTTL = 0 // default to no caching
+		response, err := etc.Get("config/"+cfg.zone+"/dnscachemaxttl", false, false)
+		if err != nil && !etcdKeyNotFound(err) {
+			return nil, err
+		}
+		if response != nil && response.Node != nil && response.Node.Value != "" {
+			value, err := strconv.Atoi(response.Node.Value)
+			if err != nil {
+				return nil, err
+			}
+			cfg.dnsCacheMaxTTL = time.Duration(value) * time.Second
+		}
+	}
+
+	// dnsCacheMissingTTL
+	{
+		cfg.dnsCacheMissingTTL = 30 * time.Second // default setting is 30 seconds
+		response, err := etc.Get("config/"+cfg.zone+"/dnscachemissingttl", false, false)
+		if err != nil && !etcdKeyNotFound(err) {
+			return nil, err
+		}
+		if response != nil && response.Node != nil && response.Node.Value != "" {
+			value, err := strconv.Atoi(response.Node.Value)
+			if err != nil {
+				return nil, err
+			}
+			cfg.dnsCacheMissingTTL = time.Duration(value) * time.Second
 		}
 	}
 

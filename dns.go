@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dustywilson/dnscache"
 	"github.com/miekg/dns"
 )
 
@@ -34,7 +35,15 @@ type DNSValue struct {
 func dnsSetup(cfg *Config) chan error {
 	log.Println("DNSSETUP")
 
-	dns.HandleFunc(".", func(w dns.ResponseWriter, req *dns.Msg) { dnsQueryServe(cfg, w, req) })
+	// FIXME: Make the default TTL into a configuration parameter
+	// FIXME: Check whether this default is being applied to unanswered queries
+	defaultTTL := uint32(10800) // this is the default TTL = 3 hours
+
+	cache := dnscache.New(cfg.DNSCacheMaxTTL(), cfg.DNSCacheMissingTTL(), func(q dns.Question) []dns.RR {
+		return answerQuestion(cfg, &q, defaultTTL)
+	})
+
+	dns.HandleFunc(".", func(w dns.ResponseWriter, req *dns.Msg) { dnsQueryServe(cfg, cache, w, req) })
 	cfg.db.InitDNS()
 	exit := make(chan error, 1)
 
@@ -49,7 +58,7 @@ func dnsSetup(cfg *Config) chan error {
 	return exit
 }
 
-func dnsQueryServe(cfg *Config, w dns.ResponseWriter, req *dns.Msg) {
+func dnsQueryServe(cfg *Config, cache *dnscache.Cache, w dns.ResponseWriter, req *dns.Msg) {
 	if req.MsgHdr.Response == true { // supposed responses sent to us are bogus
 		q := req.Question[0]
 		log.Printf("DNS Query IS BOGUS %s %s from %s.\n", q.Name, dns.Type(q.Qtype).String(), w.RemoteAddr())
@@ -59,17 +68,18 @@ func dnsQueryServe(cfg *Config, w dns.ResponseWriter, req *dns.Msg) {
 	// TODO: handle AXFR/IXFR (full and incremental) *someday* for use by non-netcore slaves
 	//       ... also if we do that, also handle sending NOTIFY to listed slaves attached to the SOA record
 
-	// FIXME: Make the default TTL into a configuration parameter
-	defaultTTL := uint32(10800) // this is the default TTL = 3 hours
-
-	var answers []dns.RR
-
+	// Process questions in parallel
+	pending := make([]chan []dns.RR, 0, len(req.Question)) // Slice of answer channels
 	for i := range req.Question {
 		q := &req.Question[i]
 		log.Printf("DNS Query [%d/%d] %s %s from %s.\n", i+1, len(req.Question), q.Name, dns.Type(q.Qtype).String(), w.RemoteAddr())
-		// TODO: lookup in an in-memory cache (obeying TTLs!)
-		answers = append(answers, answerQuestion(cfg, q, defaultTTL)...)
-		// TODO: Cache the response locally in RAM?
+		pending = append(pending, serveQuestion(cfg, cache, q))
+	}
+
+	// Assemble answers according to the order of the questions
+	var answers []dns.RR
+	for _, ch := range pending {
+		answers = append(answers, <-ch...)
 	}
 
 	if len(answers) > 0 {
@@ -85,16 +95,35 @@ func dnsQueryServe(cfg *Config, w dns.ResponseWriter, req *dns.Msg) {
 	w.WriteMsg(failMsg)
 }
 
-func answerQuestion(cfg *Config, q *dns.Question, defaultTTL uint32) []dns.RR {
-	answerTTL := defaultTTL
+func serveQuestion(cfg *Config, cache *dnscache.Cache, q *dns.Question) chan []dns.RR {
+	output := make(chan []dns.RR)
 	var answers []dns.RR
-	var secondaryAnswers []dns.RR
 
 	// is this a WOL query?
 	if isWOLTrigger(q) {
 		answer := processWOL(cfg, q)
 		answers = append(answers, answer)
 	}
+
+	rc := make(chan []dns.RR)
+
+	cache.Lookup(dnscache.Request{
+		Question:     *q,
+		ResponseChan: rc,
+	})
+
+	go func() {
+		answers = append(answers, <-rc...)
+		output <- answers
+	}()
+
+	return output
+}
+
+func answerQuestion(cfg *Config, q *dns.Question, defaultTTL uint32) []dns.RR {
+	answerTTL := defaultTTL
+	var answers []dns.RR
+	var secondaryAnswers []dns.RR
 
 	qType := dns.Type(q.Qtype).String() // query type
 	log.Printf("[Lookup [%s] [%s] %d]\n", q.Name, qType, answerTTL)

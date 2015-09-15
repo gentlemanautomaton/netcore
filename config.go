@@ -11,18 +11,20 @@ import (
 // Config is the host+zone config for this server
 type Config struct {
 	sync.Mutex
-	db                DB
-	hostname          string
-	zone              string
-	domain            string
-	subnet            *net.IPNet
-	gateway           net.IP
-	dhcpIP            net.IP
-	dhcpNIC           string
-	dhcpSubnet        *net.IPNet
-	dhcpLeaseDuration time.Duration
-	dhcpTFTP          string
-	dnsForwarders     []string
+	db                 DB
+	hostname           string
+	zone               string
+	domain             string
+	subnet             *net.IPNet
+	gateway            net.IP
+	dhcpIP             net.IP
+	dhcpNIC            string
+	dhcpSubnet         *net.IPNet
+	dhcpLeaseDuration  time.Duration
+	dhcpTFTP           string
+	dnsForwarders      []string
+	dnsCacheMaxTTL     time.Duration
+	dnsCacheMissingTTL time.Duration
 }
 
 type ConfigProvider interface {
@@ -121,4 +123,19 @@ func (cfg *Config) DNSForwarders() []string {
 	cfg.Lock()
 	defer cfg.Unlock()
 	return cfg.dnsForwarders
+}
+
+// DNSCacheMaxTTL returns the maximum duration for which answers will be stored
+// in the cache
+func (cfg *Config) DNSCacheMaxTTL() time.Duration {
+	cfg.Lock()
+	defer cfg.Unlock()
+	return cfg.dnsCacheMaxTTL
+}
+
+// DNSCacheMissingTTL returns the TTL for cached queries with no answer
+func (cfg *Config) DNSCacheMissingTTL() time.Duration {
+	cfg.Lock()
+	defer cfg.Unlock()
+	return cfg.dnsCacheMissingTTL
 }
