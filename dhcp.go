@@ -1,18 +1,24 @@
 package main
 
 import (
-	"crypto/sha1"
 	"encoding/binary"
-	"errors"
-	"fmt"
 	"log"
 	"net"
 	"strings"
 	"time"
 
-	"github.com/coreos/go-etcd/etcd"
 	"github.com/krolaw/dhcp4"
 )
+
+type DHCPDB interface {
+	InitDHCP()
+	GetIP(net.IP) (IPEntry, error)
+	HasIP(net.IP) bool
+	GetMAC(mac net.HardwareAddr, cascade bool) (entry *MACEntry, found bool, err error)
+	RenewLease(lease *MACEntry) error
+	CreateLease(lease *MACEntry) error
+	WriteLease(lease *MACEntry) error
+}
 
 // DHCPService is the DHCP server instance
 type DHCPService struct {
@@ -22,25 +28,30 @@ type DHCPService struct {
 	guestPool      *net.IPNet
 	leaseDuration  time.Duration
 	defaultOptions dhcp4.Options // FIXME: make different options per pool?
-	etcdClient     *etcd.Client
+	db             DB
 }
 
-type dhcpLease struct {
-	mac      net.HardwareAddr
-	ip       net.IP
-	duration time.Duration
+type IPEntry struct {
+	MAC net.HardwareAddr
+}
+
+type MACEntry struct {
+	MAC      net.HardwareAddr
+	IP       net.IP
+	Duration time.Duration
+	Attr     map[string]string
 }
 
 const minimumLeaseDuration = 60 * time.Second // FIXME: put this in a config
 
-func dhcpSetup(cfg *Config, etc *etcd.Client) chan error {
-	etc.CreateDir("dhcp", 0)
+func dhcpSetup(cfg *Config) chan error {
+	cfg.db.InitDHCP()
 	exit := make(chan error, 1)
 	go func() {
 		d := &DHCPService{
 			ip:            cfg.DHCPIP(),
 			leaseDuration: cfg.DHCPLeaseDuration(),
-			etcdClient:    etc,
+			db:            cfg.db,
 			subnet:        cfg.Subnet(),
 			guestPool:     cfg.DHCPSubnet(),
 			domain:        cfg.Domain(),
@@ -74,24 +85,29 @@ func (d *DHCPService) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, 
 		}
 		log.Printf("DHCP Discover from %s\n", mac.String())
 
+		// Look up the MAC entry with cascaded attributes
+		lease, found, err := d.db.GetMAC(mac, true)
+		if err != nil {
+			return nil
+		}
+
 		// Existing Lease
-		lease, err := d.getLease(mac)
-		if err == nil {
-			options := d.getOptionsFromMAC(mac)
-			log.Printf("DHCP Discover from %s (we offer %s from current lease)\n", mac.String(), lease.ip.String())
+		if found {
+			options := d.getOptionsFromMAC(lease)
+			log.Printf("DHCP Discover from %s (we offer %s from current lease)\n", lease.MAC.String(), lease.IP.String())
 			// for x, y := range reqOptions {
 			// 	log.Printf("\tR[%v] %v %s\n", x, y, y)
 			// }
 			// for x, y := range options {
 			// 	log.Printf("\tO[%v] %v %s\n", x, y, y)
 			// }
-			return dhcp4.ReplyPacket(packet, dhcp4.Offer, d.ip.To4(), lease.ip.To4(), d.getLeaseDurationForRequest(reqOptions, lease.duration), options.SelectOrderOrAll(reqOptions[dhcp4.OptionParameterRequestList]))
+			return dhcp4.ReplyPacket(packet, dhcp4.Offer, d.ip.To4(), lease.IP.To4(), d.getLeaseDurationForRequest(reqOptions, lease.Duration), options.SelectOrderOrAll(reqOptions[dhcp4.OptionParameterRequestList]))
 		}
 
 		// New Lease
 		ip := d.getIPFromPool()
 		if ip != nil {
-			options := d.getOptionsFromMAC(mac)
+			options := d.getOptionsFromMAC(lease)
 			log.Printf("DHCP Discover from %s (we offer %s from pool)\n", mac.String(), ip.String())
 			// for x, y := range reqOptions {
 			// 	log.Printf("\tR[%v] %v %s\n", x, y, y)
@@ -150,14 +166,18 @@ func (d *DHCPService) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, 
 
 		// Process Request
 		log.Printf("DHCP Request (%s) from %s wanting %s...\n", state, mac.String(), requestedIP.String())
-		lease, err := d.getLease(mac)
-		if err == nil {
+		lease, found, err := d.db.GetMAC(mac, true)
+		if err != nil {
+			return nil
+		}
+
+		if found {
 			// Existing Lease
-			lease.duration = d.getLeaseDurationForRequest(reqOptions, d.leaseDuration)
-			if lease.ip.Equal(requestedIP) {
-				err = d.renewLease(lease)
+			lease.Duration = d.getLeaseDurationForRequest(reqOptions, d.leaseDuration)
+			if lease.IP.Equal(requestedIP) {
+				err = d.db.RenewLease(lease)
 			} else {
-				log.Printf("DHCP Request (%s) from %s wanting %s (we reject due to lease mismatch, should be %s)\n", state, mac.String(), requestedIP.String(), lease.ip.String())
+				log.Printf("DHCP Request (%s) from %s wanting %s (we reject due to lease mismatch, should be %s)\n", state, lease.MAC.String(), requestedIP.String(), lease.IP.String())
 				return dhcp4.ReplyPacket(packet, dhcp4.NAK, d.ip.To4(), nil, 0, nil)
 			}
 		} else {
@@ -168,19 +188,19 @@ func (d *DHCPService) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, 
 			}
 
 			// New lease
-			lease = dhcpLease{
-				mac:      mac,
-				ip:       requestedIP,
-				duration: d.getLeaseDurationForRequest(reqOptions, d.leaseDuration),
+			lease = &MACEntry{
+				MAC:      mac,
+				IP:       requestedIP,
+				Duration: d.getLeaseDurationForRequest(reqOptions, d.leaseDuration),
 			}
-			err = d.createLease(lease)
+			err = d.db.CreateLease(lease)
 		}
 
 		if err == nil {
-			d.maintainDNSRecords(lease.mac, lease.ip, packet, reqOptions) // TODO: Move this?
-			options := d.getOptionsFromMAC(mac)
+			d.maintainDNSRecords(lease, packet, reqOptions) // TODO: Move this?
+			options := d.getOptionsFromMAC(lease)
 			log.Printf("DHCP Request (%s) from %s wanting %s (we agree)\n", state, mac.String(), requestedIP.String())
-			return dhcp4.ReplyPacket(packet, dhcp4.ACK, d.ip.To4(), requestedIP.To4(), lease.duration, options.SelectOrderOrAll(reqOptions[dhcp4.OptionParameterRequestList]))
+			return dhcp4.ReplyPacket(packet, dhcp4.ACK, d.ip.To4(), requestedIP.To4(), lease.Duration, options.SelectOrderOrAll(reqOptions[dhcp4.OptionParameterRequestList]))
 		}
 
 		log.Printf("DHCP Request (%s) from %s wanting %s (we reject due to address collision)\n", state, mac.String(), requestedIP.String())
@@ -209,8 +229,11 @@ func (d *DHCPService) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, 
 		if len(ip) > 0 && !ip.IsUnspecified() {
 			log.Printf("DHCP Inform from %s for %s \n", mac.String(), ip.String())
 			if len(ip) == net.IPv4len && d.guestPool.Contains(ip) {
-				options := d.getOptionsFromMAC(mac)
-				return informReplyPacket(packet, dhcp4.ACK, d.ip.To4(), options.SelectOrderOrAll(reqOptions[dhcp4.OptionParameterRequestList]))
+				entry, found, _ := d.db.GetMAC(mac, true)
+				if found {
+					options := d.getOptionsFromMAC(entry)
+					return informReplyPacket(packet, dhcp4.ACK, d.ip.To4(), options.SelectOrderOrAll(reqOptions[dhcp4.OptionParameterRequestList]))
+				}
 			}
 		}
 	}
@@ -263,57 +286,15 @@ func (d *DHCPService) getIPFromPool() net.IP {
 	// TODO: Create a channel and spawn a goproc with something like this function to feed it; then have the server pull addresses from that channel
 	for ip := dhcp4.IPAdd(d.guestPool.IP, 1); d.guestPool.Contains(ip); ip = dhcp4.IPAdd(ip, 1) {
 		//log.Println(ip.String())
-		response, _ := d.etcdClient.Get("dhcp/"+ip.String(), false, false)
-		if response == nil || response.Node == nil { // this means that the IP is not already occupied
+		if !d.db.HasIP(ip) { // this means that the IP is not already occupied
 			return ip
 		}
 	}
 	return nil
 }
 
-func (d *DHCPService) getLease(mac net.HardwareAddr) (dhcpLease, error) {
-	lease := dhcpLease{}
-	response, err := d.etcdClient.Get("dhcp/"+mac.String()+"/ip", false, false)
-	if err == nil {
-		if response != nil && response.Node != nil {
-			lease.mac = mac
-			lease.ip = net.ParseIP(response.Node.Value)
-			lease.duration = time.Duration(response.Node.TTL)
-		} else {
-			err = errors.New("Not Found")
-		}
-	}
-	return lease, err
-}
-
-func (d *DHCPService) renewLease(lease dhcpLease) error {
-	duration := uint64(lease.duration.Seconds() + 0.5) // Half second jitter to hide network delay
-	_, err := d.etcdClient.CompareAndSwap("dhcp/"+lease.ip.String(), lease.mac.String(), duration, lease.mac.String(), 0)
-	if err == nil {
-		return d.writeLease(lease)
-	}
-	return err
-}
-
-func (d *DHCPService) createLease(lease dhcpLease) error {
-	duration := uint64(lease.duration.Seconds() + 0.5)
-	_, err := d.etcdClient.Create("dhcp/"+lease.ip.String(), lease.mac.String(), duration)
-	if err == nil {
-		return d.writeLease(lease)
-	}
-	return err
-}
-
-func (d *DHCPService) writeLease(lease dhcpLease) error {
-	duration := uint64(lease.duration.Seconds() + 0.5) // Half second jitter to hide network delay
-	// FIXME: Decide what to do if either of these calls returns an error
-	d.etcdClient.CreateDir("dhcp/"+lease.mac.String(), 0)
-	d.etcdClient.Set("dhcp/"+lease.mac.String()+"/ip", lease.ip.String(), duration)
-	return nil
-}
-
-func (d *DHCPService) maintainDNSRecords(mac net.HardwareAddr, ip net.IP, packet dhcp4.Packet, reqOptions dhcp4.Options) {
-	options := d.getOptionsFromMAC(mac)
+func (d *DHCPService) maintainDNSRecords(entry *MACEntry, packet dhcp4.Packet, reqOptions dhcp4.Options) {
+	options := d.getOptionsFromMAC(entry)
 	if domain, ok := options[dhcp4.OptionDomainName]; ok {
 		// FIXME:  danger!  we're mixing systems here...  if we keep this up, we will have spaghetti!
 		name := ""
@@ -324,14 +305,8 @@ func (d *DHCPService) maintainDNSRecords(mac net.HardwareAddr, ip net.IP, packet
 		}
 		if name != "" {
 			host := strings.ToLower(strings.Join([]string{name, string(domain)}, "."))
-			ipHash := fmt.Sprintf("%x", sha1.Sum([]byte(ip.String())))     // hash the IP address so we can have a unique key name (no other reason for this, honestly)
-			pathParts := strings.Split(strings.TrimSuffix(host, "."), ".") // breakup the name
-			queryPath := strings.Join(reverseSlice(pathParts), "/")        // reverse and join them with a slash delimiter
-			log.Printf("Wanting to register against %s/%s\n", queryPath, name)
-			d.etcdClient.Set("dns/"+queryPath+"/@a/val/"+ipHash, ip.String(), uint64(d.leaseDuration.Seconds()+0.5))
-			hostHash := fmt.Sprintf("%x", sha1.Sum([]byte(host))) // hash the hostname so we can have a unique key name (no other reason for this, honestly)
-			slashedIP := strings.Replace(ip.To4().String(), ".", "/", -1)
-			d.etcdClient.Set("dns/arpa/in-addr/"+slashedIP+"/@ptr/val/"+hostHash, host, uint64(d.leaseDuration.Seconds()+0.5))
+			// TODO: Pick a TTL for the record and use it
+			d.db.RegisterA(host, entry.IP, false, 0, uint64(d.leaseDuration.Seconds()+0.5))
 		} else {
 			log.Println(">> No host name")
 		}
@@ -340,7 +315,7 @@ func (d *DHCPService) maintainDNSRecords(mac net.HardwareAddr, ip net.IP, packet
 	}
 }
 
-func (d *DHCPService) getOptionsFromMAC(mac net.HardwareAddr) dhcp4.Options {
+func (d *DHCPService) getOptionsFromMAC(entry *MACEntry) dhcp4.Options {
 	options := dhcp4.Options{}
 
 	for i := range d.defaultOptions {
@@ -349,7 +324,7 @@ func (d *DHCPService) getOptionsFromMAC(mac net.HardwareAddr) dhcp4.Options {
 	}
 
 	{ // Subnet Mask
-		if value, ok := d.getValueFromMAC(mac, "mask"); ok {
+		if value, ok := entry.Attr["mask"]; ok {
 			if value == "" {
 				delete(options, dhcp4.OptionSubnetMask)
 			} else {
@@ -359,7 +334,7 @@ func (d *DHCPService) getOptionsFromMAC(mac net.HardwareAddr) dhcp4.Options {
 	}
 
 	{ // Gateway/Router
-		if value, ok := d.getValueFromMAC(mac, "gw"); ok {
+		if value, ok := entry.Attr["gw"]; ok {
 			if value == "" {
 				delete(options, dhcp4.OptionRouter)
 			} else {
@@ -369,7 +344,7 @@ func (d *DHCPService) getOptionsFromMAC(mac net.HardwareAddr) dhcp4.Options {
 	}
 
 	{ // Name Server
-		if value, ok := d.getValueFromMAC(mac, "ns"); ok {
+		if value, ok := entry.Attr["ns"]; ok {
 			if value == "" {
 				delete(options, dhcp4.OptionDomainNameServer)
 			} else {
@@ -379,7 +354,7 @@ func (d *DHCPService) getOptionsFromMAC(mac net.HardwareAddr) dhcp4.Options {
 	}
 
 	{ // Host Name
-		if value, ok := d.getValueFromMAC(mac, "name"); ok {
+		if value, ok := entry.Attr["name"]; ok {
 			if value == "" {
 				delete(options, dhcp4.OptionHostName)
 			} else {
@@ -389,7 +364,7 @@ func (d *DHCPService) getOptionsFromMAC(mac net.HardwareAddr) dhcp4.Options {
 	}
 
 	{ // Domain Name
-		if value, ok := d.getValueFromMAC(mac, "domain"); ok {
+		if value, ok := entry.Attr["domain"]; ok {
 			if value != "" {
 				options[dhcp4.OptionDomainName] = []byte(value)
 			}
@@ -404,7 +379,7 @@ func (d *DHCPService) getOptionsFromMAC(mac net.HardwareAddr) dhcp4.Options {
 	}
 
 	{ // Broadcast Address
-		if value, ok := d.getValueFromMAC(mac, "broadcast"); ok {
+		if value, ok := entry.Attr["broadcast"]; ok {
 			if value == "" {
 				delete(options, dhcp4.OptionBroadcastAddress)
 			} else {
@@ -414,7 +389,7 @@ func (d *DHCPService) getOptionsFromMAC(mac net.HardwareAddr) dhcp4.Options {
 	}
 
 	{ // NTP Server
-		if value, ok := d.getValueFromMAC(mac, "ntp"); ok {
+		if value, ok := entry.Attr["ntp"]; ok {
 			if value == "" {
 				delete(options, dhcp4.OptionNetworkTimeProtocolServers)
 			} else {
@@ -424,7 +399,7 @@ func (d *DHCPService) getOptionsFromMAC(mac net.HardwareAddr) dhcp4.Options {
 	}
 
 	{ // TFTP Server
-		if value, ok := d.getValueFromMAC(mac, "tftp"); ok {
+		if value, ok := entry.Attr["tftp"]; ok {
 			if value == "" {
 				delete(options, dhcp4.OptionTFTPServerName)
 			} else {
@@ -434,17 +409,6 @@ func (d *DHCPService) getOptionsFromMAC(mac net.HardwareAddr) dhcp4.Options {
 	}
 
 	return options
-}
-
-func (d *DHCPService) getValueFromMAC(mac net.HardwareAddr, key string) (string, bool) {
-	for len(mac) > 0 {
-		response, _ := d.etcdClient.Get("dhcp/"+mac.String()+"/"+key, false, false)
-		if response != nil && response.Node != nil {
-			return response.Node.Value, true
-		}
-		mac = mac[0 : len(mac)-1]
-	}
-	return "", false
 }
 
 // ReplyPacket creates a reply packet that a Server would send to a client.

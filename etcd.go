@@ -6,14 +6,19 @@ import (
 	"github.com/coreos/go-etcd/etcd"
 )
 
-func etcdSetup(serverList string) *etcd.Client {
+type EtcdDB struct {
+	client *etcd.Client
+}
+
+func NewEtcdDB(serverList string) DB {
 	var servers []string
 	if serverList != "" {
 		servers = strings.Split(serverList, ",")
 	}
-	etc := etcd.NewClient(servers)
-	etc.SetConsistency("WEAK_CONSISTENCY")
-	return etc
+	client := etcd.NewClient(servers)
+	client.SetConsistency("WEAK_CONSISTENCY")
+	db := EtcdDB{client}
+	return db
 }
 
 func etcdKeyNotFound(err error) bool {

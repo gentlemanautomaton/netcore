@@ -13,10 +13,10 @@ func init() {
 }
 
 func main() {
-	etc := etcdSetup(*etcdServers)
+	db := NewEtcdDB(*etcdServers)
 
 	log.Println("PRECONFIG")
-	cfg, err := getConfig(etc)
+	cfg, err := db.GetConfig()
 	log.Println("POSTCONFIG")
 
 	if err != nil {
@@ -32,10 +32,10 @@ func main() {
 	} else if cfg.DHCPNIC() == "" {
 		log.Println("DHCP service is disabled; this machine does not have a DHCP NIC assigned.")
 	} else {
-		dhcpExit = dhcpSetup(cfg, etc)
+		dhcpExit = dhcpSetup(cfg)
 	}
 
-	dnsExit := dnsSetup(cfg, etc)
+	dnsExit := dnsSetup(cfg)
 
 	log.Println("NETCORE Started.")
 
