@@ -32,6 +32,10 @@ type DNSValue struct {
 	Attr       map[string]string
 }
 
+const (
+	dnsCacheBufferSize = 512
+)
+
 func dnsSetup(cfg *Config) chan error {
 	log.Println("DNSSETUP")
 
@@ -39,7 +43,7 @@ func dnsSetup(cfg *Config) chan error {
 	// FIXME: Check whether this default is being applied to unanswered queries
 	defaultTTL := uint32(10800) // this is the default TTL = 3 hours
 
-	cache := dnscache.New(cfg.DNSCacheMaxTTL(), cfg.DNSCacheMissingTTL(), func(q dns.Question) []dns.RR {
+	cache := dnscache.New(dnsCacheBufferSize, cfg.DNSCacheMaxTTL(), cfg.DNSCacheMissingTTL(), func(q dns.Question) []dns.RR {
 		return answerQuestion(cfg, &q, defaultTTL)
 	})
 
