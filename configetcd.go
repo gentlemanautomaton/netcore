@@ -21,7 +21,9 @@ func (db EtcdDB) GetConfig() (*Config, error) {
 	etc.CreateDir("config", 0)
 	fmt.Println("postcreate")
 
-	cfg := new(Config)
+	cfg := &Config{
+		db: db,
+	}
 
 	// Hostname
 	{
