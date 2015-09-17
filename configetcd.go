@@ -26,7 +26,9 @@ func (db EtcdDB) GetConfig() (*Config, error) {
 	// Hostname
 	{
 		var hostname string
-		if len(os.Getenv("ETCD_NAME")) > 0 {
+		if len(os.Getenv("NETCORE_NAME")) > 0 {
+			hostname = os.Getenv("NETCORE_NAME")
+		} else if len(os.Getenv("ETCD_NAME")) > 0 {
 			re := regexp.MustCompile(`^/([^/]+)/`)
 			hostnameParts := re.FindStringSubmatch(os.Getenv("ETCD_NAME"))
 			if len(hostnameParts) > 1 && len(hostnameParts[1]) > 0 {
