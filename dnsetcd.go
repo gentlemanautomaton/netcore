@@ -2,7 +2,6 @@ package main
 
 import (
 	"crypto/sha1"
-	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -33,7 +32,7 @@ func (db EtcdDB) GetDNS(name string, rrType string) (*DNSEntry, error) {
 		return etcdNodeToDNSEntry(response.Node), nil
 	}
 
-	return nil, errors.New("Not Found") // FIXME: Return a more proper error type
+	return nil, ErrNotFound
 }
 
 func (db EtcdDB) HasDNS(name string, rrType string) (bool, error) {

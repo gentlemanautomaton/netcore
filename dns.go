@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"log"
 	"net"
 	"regexp"
@@ -31,6 +32,16 @@ type DNSValue struct {
 	Value      string
 	Attr       map[string]string
 }
+
+type dnsEntryResult struct {
+	Entry *DNSEntry
+	Err   error
+	RType uint16
+}
+
+var (
+	ErrNotFound = errors.New("not found")
+)
 
 const (
 	dnsCacheBufferSize = 512
@@ -125,37 +136,23 @@ func serveQuestion(cfg *Config, cache *dnscache.Cache, q *dns.Question) chan []d
 }
 
 func answerQuestion(cfg *Config, q *dns.Question, defaultTTL uint32) []dns.RR {
+	log.Printf("[Lookup [%s] [%v]]\n", q.Name, dns.Type(q.Qtype))
 	answerTTL := defaultTTL
 	var answers []dns.RR
 	var secondaryAnswers []dns.RR
-
-	qType := dns.Type(q.Qtype).String() // query type
-	log.Printf("[Lookup [%s] [%s] %d]\n", q.Name, qType, answerTTL)
-
 	var wouldLikeForwarder = true
 
-	// TODO: Issue the CName and RR etcd queries simultaneously
-
-	// Always attempt CNAME lookup first
-	entry, err := cfg.db.GetDNS(q.Name, "CNAME")
-
-	// Look up the requested RR type
-	if err != nil { // FIXME: Test for missing entries specifically, not just any error
-		//log.Printf("[Lookup [%s] [%s] (normal lookup) %s]\n", q.Name, qType, key)
-		entry, err = cfg.db.GetDNS(q.Name, qType)
-	}
+	entry, rrType, err := fetchBestEntry(cfg, q)
 
 	if err == nil {
-		//log.Printf("[Lookup [%s] [%s] (matched something)]\n", q.Name, qType)
 		wouldLikeForwarder = false
-
 		if entry.TTL > 0 {
 			answerTTL = entry.TTL
-			log.Printf("[FOUND TTL [%s] [%s] %d]\n", q.Name, dns.Type(q.Qtype).String(), answerTTL)
 		}
+		log.Printf("[FOUND DNS ENTRY [%s] [%v]]\n", q.Name, dns.Type(rrType))
 
-		switch qType {
-		case "SOA":
+		switch q.Qtype {
+		case dns.TypeSOA:
 			answer := answerSOA(q, entry)
 			answers = append(answers, answer)
 		default:
@@ -178,46 +175,46 @@ func answerQuestion(cfg *Config, q *dns.Question, defaultTTL uint32) []dns.RR {
 				if value.TTL > 0 && value.TTL < answerTTL {
 					answerTTL = value.TTL
 				}
-				switch qType {
+				switch rrType {
 				// FIXME: Add more RR types!
 				//        http://godoc.org/github.com/miekg/dns has info as well as
 				//        http://en.wikipedia.org/wiki/List_of_DNS_record_types
-				case "TXT":
+				case dns.TypeTXT:
 					answer := answerTXT(q, value)
 					answers = append(answers, answer)
-				case "A":
+				case dns.TypeA:
 					answer := answerA(q, value)
 					answers = append(answers, answer)
-				case "AAAA":
+				case dns.TypeAAAA:
 					answer := answerAAAA(q, value)
 					answers = append(answers, answer)
-				case "NS":
+				case dns.TypeNS:
 					answer := answerNS(q, value)
 					answers = append(answers, answer)
-				case "CNAME":
+				case dns.TypeCNAME:
 					answer, target := answerCNAME(q, value)
 					answers = append(answers, answer)
 					q2 := q
 					q2.Name = target // replace question's name with new name
 					secondaryAnswers = append(secondaryAnswers, answerQuestion(cfg, q2, defaultTTL)...)
-				case "DNAME":
+				case dns.TypeDNAME:
 					answer := answerDNAME(q, value)
 					answers = append(answers, answer)
 					wouldLikeForwarder = true
-				case "PTR":
+				case dns.TypePTR:
 					answer := answerPTR(q, value)
 					answers = append(answers, answer)
-				case "MX":
+				case dns.TypeMX:
 					answer := answerMX(q, value)
 					// FIXME: are we supposed to be returning these in prio ordering?
 					//        ... or maybe it does that for us?  or maybe it's the enduser's problem?
 					answers = append(answers, answer)
-				case "SRV":
+				case dns.TypeSRV:
 					answer := answerSRV(q, value)
 					// FIXME: are we supposed to be returning these rando-weighted and in priority ordering?
 					//        ... or maybe it does that for us?  or maybe it's the enduser's problem?
 					answers = append(answers, answer)
-				case "SSHFP":
+				case dns.TypeSSHFP:
 					// TODO: implement SSHFP
 					//       http://godoc.org/github.com/miekg/dns#SSHFP
 					//       NOTE: we must implement DNSSEC before using this RR type
@@ -226,9 +223,9 @@ func answerQuestion(cfg *Config, q *dns.Question, defaultTTL uint32) []dns.RR {
 		}
 	}
 
-	log.Printf("[APPLIED TTL [%s] [%s] %d]\n", q.Name, dns.Type(q.Qtype).String(), answerTTL)
 	for _, answer := range answers {
 		answer.Header().Ttl = answerTTL // FIXME: I think this might be inappropriate
+		//log.Printf("[APPLIED TTL [%s] [%s] %d]\n", q.Name, dns.Type(q.Qtype).String(), answerTTL)
 	}
 
 	// Append the results of secondary queries, such as the results of CNAME and DNAME records
@@ -241,7 +238,57 @@ func answerQuestion(cfg *Config, q *dns.Question, defaultTTL uint32) []dns.RR {
 		answers = append(answers, forwardQuestion(q, cfg.DNSForwarders())...)
 	}
 
+	for _, answer := range answers {
+		log.Printf("[ANSWER [%s]]\n", answer.String())
+	}
+
 	return answers
+}
+
+// fetchBestEntry will return the most suitable entry from the DNS database for
+// the given query. If no suitable entry is found it will return ErrNotFound.
+func fetchBestEntry(cfg *Config, q *dns.Question) (entry *DNSEntry, rrType uint16, err error) {
+	err = ErrNotFound
+	for _, result := range fetchRelatedEntries(cfg, q) {
+		data := <-result
+		entry, rrType, err = data.Entry, data.RType, data.Err
+		if err == nil {
+			return
+		}
+		// FIXME: Test for missing entries specifically, not just any error
+	}
+	return
+}
+
+// fetchRelatedEntries issues parallel queries to the DNS database for all
+// records possibly needed to answer the given question, and returns a slice of
+// channels from which to retrieve answers in prioritized order.
+func fetchRelatedEntries(cfg *Config, q *dns.Question) []chan dnsEntryResult {
+	// Issue the CNAME and RR queries simultaneously
+	entries := make([]chan dnsEntryResult, 0, 2)
+	entries = append(entries, fetchEntry(cfg, q, dns.TypeCNAME))
+	if q.Qtype != dns.TypeCNAME {
+		entries = append(entries, fetchEntry(cfg, q, q.Qtype))
+	}
+	if q.Qtype != dns.TypeDNAME {
+		// TODO: Check for DNAME entries for the given name and for each parent for
+		//       which we have authority.
+		//queries = append(queries, fetchEntry(cfg, q, dns.TypeDNAME))
+	}
+	return entries
+}
+
+func fetchEntry(cfg *Config, q *dns.Question, rrType uint16) chan dnsEntryResult {
+	out := make(chan dnsEntryResult)
+	go func() {
+		entry, err := cfg.db.GetDNS(q.Name, dns.Type(rrType).String())
+		out <- dnsEntryResult{
+			Entry: entry,
+			RType: rrType,
+			Err:   err,
+		}
+	}()
+	return out
 }
 
 func prepareAnswerMsg(req *dns.Msg, answers []dns.RR) *dns.Msg {
