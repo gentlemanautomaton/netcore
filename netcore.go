@@ -4,6 +4,7 @@ import (
 	"flag"
 	"log"
 	"os"
+	"strings"
 )
 
 var etcdServers = flag.String("etcd", "", "Comma-separated list of etcd servers.")
@@ -13,6 +14,13 @@ func init() {
 }
 
 func main() {
+	if len(*etcdServers) == 0 {
+		if len(os.Getenv("ETCD_PORT")) > 0 {
+			*etcdServers = strings.Replace(os.Getenv("ETCD_PORT"), "tcp://", "http://", 1)
+		} else {
+			*etcdServers = "etcd" // just some default hostname that Docker or otherwise might use
+		}
+	}
 	db := NewEtcdDB(*etcdServers)
 
 	log.Println("PRECONFIG")

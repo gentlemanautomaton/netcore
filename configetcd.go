@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"net"
+	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -23,9 +25,19 @@ func (db EtcdDB) GetConfig() (*Config, error) {
 
 	// Hostname
 	{
-		hostname, err := getHostname()
-		if err != nil {
-			return nil, err
+		var hostname string
+		if len(os.Getenv("ETCD_NAME")) > 0 {
+			re := regexp.MustCompile(`^/([^/]+)/`)
+			hostnameParts := re.FindStringSubmatch(os.Getenv("ETCD_NAME"))
+			if len(hostnameParts) > 1 && len(hostnameParts[1]) > 0 {
+				hostname = hostnameParts[1]
+			}
+		} else {
+			var err error
+			hostname, err = getHostname()
+			if err != nil {
+				return nil, err
+			}
 		}
 		cfg.hostname = hostname
 	}
