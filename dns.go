@@ -99,6 +99,10 @@ func dnsQueryServe(cfg *Config, cache *dnscache.Cache, w dns.ResponseWriter, req
 		answers = append(answers, <-ch...)
 	}
 
+	for _, answer := range answers {
+		log.Printf("  [% 8.04fms] ANSWER  %s\n", msElapsed(start, time.Now()), answer.String())
+	}
+
 	if len(answers) > 0 {
 		//log.Printf("OUR DATA: [%+v]\n", answerMsg)
 		answerMsg := prepareAnswerMsg(req, answers)
@@ -139,7 +143,7 @@ func serveQuestion(cfg *Config, cache *dnscache.Cache, q *dns.Question, start ti
 }
 
 func answerQuestion(cfg *Config, c dnscache.Context, q *dns.Question, defaultTTL, qDepth uint32) []dns.RR {
-	log.Printf("  [% 8s] LOOKUP %s %v\n", time.Now().Sub(c.Start).String(), q.Name, dns.Type(q.Qtype))
+	log.Printf("  [% 8.04fms] %-7s %s %s\n", msElapsed(c.Start, time.Now()), c.Event.String(), q.Name, dns.Type(q.Qtype).String())
 	answerTTL := defaultTTL
 	var answers []dns.RR
 	var secondaryAnswers []dns.RR
@@ -152,7 +156,7 @@ func answerQuestion(cfg *Config, c dnscache.Context, q *dns.Question, defaultTTL
 		if entry.TTL > 0 {
 			answerTTL = entry.TTL
 		}
-		log.Printf("  [% 8s] FOUND  %s %v\n", time.Now().Sub(c.Start).String(), q.Name, dns.Type(rrType))
+		log.Printf("  [% 8.04fms] FOUND   %s %s\n", msElapsed(c.Start, time.Now()), q.Name, dns.Type(rrType).String())
 
 		switch q.Qtype {
 		case dns.TypeSOA:
@@ -172,7 +176,7 @@ func answerQuestion(cfg *Config, c dnscache.Context, q *dns.Question, defaultTTL
 					remaining := uint32(expiration - now)
 					if remaining < answerTTL {
 						answerTTL = remaining
-						log.Printf("  [% 8s] TTL-BY-EXPIRATION %d\n", time.Now().Sub(c.Start).String(), remaining)
+						log.Printf("  [% 8.04fms] EXPIRES %d\n", msElapsed(c.Start, time.Now()), remaining)
 					}
 				}
 				if value.TTL > 0 && value.TTL < answerTTL {
@@ -238,16 +242,19 @@ func answerQuestion(cfg *Config, c dnscache.Context, q *dns.Question, defaultTTL
 	// ... also, check to see if we hit a DNAME so we can handle that aliasing
 	// FIXME: Only forward if we are configured as a forwarder
 	if wouldLikeForwarder && !haveAuthority(cfg, q) {
+		log.Printf("  [% 8.04fms] FORWARD %s %s\n", msElapsed(c.Start, time.Now()), q.Name, dns.Type(q.Qtype).String())
 		answers = append(answers, forwardQuestion(q, cfg.DNSForwarders())...)
 	}
 
-	if qDepth == 0 {
-		for _, answer := range answers {
-			log.Printf("  [% 8s] ANSWER %s\n", time.Now().Sub(c.Start).String(), answer.String())
-		}
-	}
-
 	return answers
+}
+
+// msElapsed returns the number of milliseconds that have elapsed between now
+// and start as a float64
+func msElapsed(start, now time.Time) float64 {
+	elapsed := now.Sub(start)
+	seconds := elapsed.Seconds()
+	return seconds * 0.001
 }
 
 // fetchBestEntry will return the most suitable entry from the DNS database for
