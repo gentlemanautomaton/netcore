@@ -55,7 +55,7 @@ func dnsSetup(cfg *Config) chan error {
 	defaultTTL := uint32(10800) // this is the default TTL = 3 hours
 
 	cache := dnscache.New(dnsCacheBufferSize, cfg.DNSCacheMaxTTL(), cfg.DNSCacheMissingTTL(), func(q dns.Question) []dns.RR {
-		return answerQuestion(cfg, &q, defaultTTL)
+		return answerQuestion(cfg, &q, defaultTTL, 0)
 	})
 
 	dns.HandleFunc(".", func(w dns.ResponseWriter, req *dns.Msg) { dnsQueryServe(cfg, cache, w, req) })
@@ -135,8 +135,8 @@ func serveQuestion(cfg *Config, cache *dnscache.Cache, q *dns.Question) chan []d
 	return output
 }
 
-func answerQuestion(cfg *Config, q *dns.Question, defaultTTL uint32) []dns.RR {
-	log.Printf("[Lookup [%s] [%v]]\n", q.Name, dns.Type(q.Qtype))
+func answerQuestion(cfg *Config, q *dns.Question, defaultTTL, qDepth uint32) []dns.RR {
+	log.Printf("  LOOKUP %s %v\n", q.Name, dns.Type(q.Qtype))
 	answerTTL := defaultTTL
 	var answers []dns.RR
 	var secondaryAnswers []dns.RR
@@ -149,7 +149,7 @@ func answerQuestion(cfg *Config, q *dns.Question, defaultTTL uint32) []dns.RR {
 		if entry.TTL > 0 {
 			answerTTL = entry.TTL
 		}
-		log.Printf("[FOUND DNS ENTRY [%s] [%v]]\n", q.Name, dns.Type(rrType))
+		log.Printf("  FOUND %s %v\n", q.Name, dns.Type(rrType))
 
 		switch q.Qtype {
 		case dns.TypeSOA:
@@ -169,7 +169,7 @@ func answerQuestion(cfg *Config, q *dns.Question, defaultTTL uint32) []dns.RR {
 					remaining := uint32(expiration - now)
 					if remaining < answerTTL {
 						answerTTL = remaining
-						log.Printf("[TTL-BY-EXPIRATION [%s] [%s] %d]\n", q.Name, dns.Type(q.Qtype).String(), answerTTL)
+						log.Printf("  TTL-BY-EXPIRATION %d\n", remaining)
 					}
 				}
 				if value.TTL > 0 && value.TTL < answerTTL {
@@ -196,7 +196,7 @@ func answerQuestion(cfg *Config, q *dns.Question, defaultTTL uint32) []dns.RR {
 					answers = append(answers, answer)
 					q2 := q
 					q2.Name = target // replace question's name with new name
-					secondaryAnswers = append(secondaryAnswers, answerQuestion(cfg, q2, defaultTTL)...)
+					secondaryAnswers = append(secondaryAnswers, answerQuestion(cfg, q2, defaultTTL, qDepth+1)...)
 				case dns.TypeDNAME:
 					answer := answerDNAME(q, value)
 					answers = append(answers, answer)
@@ -238,8 +238,10 @@ func answerQuestion(cfg *Config, q *dns.Question, defaultTTL uint32) []dns.RR {
 		answers = append(answers, forwardQuestion(q, cfg.DNSForwarders())...)
 	}
 
-	for _, answer := range answers {
-		log.Printf("[ANSWER [%s]]\n", answer.String())
+	if qDepth == 0 {
+		for _, answer := range answers {
+			log.Printf("  ANSWER %s\n", answer.String())
+		}
 	}
 
 	return answers
