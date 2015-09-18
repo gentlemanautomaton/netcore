@@ -54,8 +54,8 @@ func dnsSetup(cfg *Config) chan error {
 	// FIXME: Check whether this default is being applied to unanswered queries
 	defaultTTL := uint32(10800) // this is the default TTL = 3 hours
 
-	cache := dnscache.New(dnsCacheBufferSize, cfg.DNSCacheMaxTTL(), cfg.DNSCacheMissingTTL(), func(q dns.Question) []dns.RR {
-		return answerQuestion(cfg, &q, defaultTTL, 0)
+	cache := dnscache.New(dnsCacheBufferSize, cfg.DNSCacheMaxTTL(), cfg.DNSCacheMissingTTL(), func(c dnscache.Context, q dns.Question) []dns.RR {
+		return answerQuestion(cfg, c, &q, defaultTTL, 0)
 	})
 
 	dns.HandleFunc(".", func(w dns.ResponseWriter, req *dns.Msg) { dnsQueryServe(cfg, cache, w, req) })
@@ -74,6 +74,8 @@ func dnsSetup(cfg *Config) chan error {
 }
 
 func dnsQueryServe(cfg *Config, cache *dnscache.Cache, w dns.ResponseWriter, req *dns.Msg) {
+	start := time.Now()
+
 	if req.MsgHdr.Response == true { // supposed responses sent to us are bogus
 		q := req.Question[0]
 		log.Printf("DNS Query IS BOGUS %s %s from %s.\n", q.Name, dns.Type(q.Qtype).String(), w.RemoteAddr())
@@ -88,7 +90,7 @@ func dnsQueryServe(cfg *Config, cache *dnscache.Cache, w dns.ResponseWriter, req
 	for i := range req.Question {
 		q := &req.Question[i]
 		log.Printf("DNS Query [%d/%d] %s %s from %s.\n", i+1, len(req.Question), q.Name, dns.Type(q.Qtype).String(), w.RemoteAddr())
-		pending = append(pending, serveQuestion(cfg, cache, q))
+		pending = append(pending, serveQuestion(cfg, cache, q, start))
 	}
 
 	// Assemble answers according to the order of the questions
@@ -110,7 +112,7 @@ func dnsQueryServe(cfg *Config, cache *dnscache.Cache, w dns.ResponseWriter, req
 	w.WriteMsg(failMsg)
 }
 
-func serveQuestion(cfg *Config, cache *dnscache.Cache, q *dns.Question) chan []dns.RR {
+func serveQuestion(cfg *Config, cache *dnscache.Cache, q *dns.Question, start time.Time) chan []dns.RR {
 	output := make(chan []dns.RR)
 	var answers []dns.RR
 
@@ -124,6 +126,7 @@ func serveQuestion(cfg *Config, cache *dnscache.Cache, q *dns.Question) chan []d
 
 	cache.Lookup(dnscache.Request{
 		Question:     *q,
+		Start:        start,
 		ResponseChan: rc,
 	})
 
@@ -135,8 +138,8 @@ func serveQuestion(cfg *Config, cache *dnscache.Cache, q *dns.Question) chan []d
 	return output
 }
 
-func answerQuestion(cfg *Config, q *dns.Question, defaultTTL, qDepth uint32) []dns.RR {
-	log.Printf("  LOOKUP %s %v\n", q.Name, dns.Type(q.Qtype))
+func answerQuestion(cfg *Config, c dnscache.Context, q *dns.Question, defaultTTL, qDepth uint32) []dns.RR {
+	log.Printf("  [% 8s] LOOKUP %s %v\n", time.Now().Sub(c.Start).String(), q.Name, dns.Type(q.Qtype))
 	answerTTL := defaultTTL
 	var answers []dns.RR
 	var secondaryAnswers []dns.RR
@@ -149,7 +152,7 @@ func answerQuestion(cfg *Config, q *dns.Question, defaultTTL, qDepth uint32) []d
 		if entry.TTL > 0 {
 			answerTTL = entry.TTL
 		}
-		log.Printf("  FOUND %s %v\n", q.Name, dns.Type(rrType))
+		log.Printf("  [% 8s] FOUND  %s %v\n", time.Now().Sub(c.Start).String(), q.Name, dns.Type(rrType))
 
 		switch q.Qtype {
 		case dns.TypeSOA:
@@ -169,7 +172,7 @@ func answerQuestion(cfg *Config, q *dns.Question, defaultTTL, qDepth uint32) []d
 					remaining := uint32(expiration - now)
 					if remaining < answerTTL {
 						answerTTL = remaining
-						log.Printf("  TTL-BY-EXPIRATION %d\n", remaining)
+						log.Printf("  [% 8s] TTL-BY-EXPIRATION %d\n", time.Now().Sub(c.Start).String(), remaining)
 					}
 				}
 				if value.TTL > 0 && value.TTL < answerTTL {
@@ -196,7 +199,7 @@ func answerQuestion(cfg *Config, q *dns.Question, defaultTTL, qDepth uint32) []d
 					answers = append(answers, answer)
 					q2 := q
 					q2.Name = target // replace question's name with new name
-					secondaryAnswers = append(secondaryAnswers, answerQuestion(cfg, q2, defaultTTL, qDepth+1)...)
+					secondaryAnswers = append(secondaryAnswers, answerQuestion(cfg, c, q2, defaultTTL, qDepth+1)...)
 				case dns.TypeDNAME:
 					answer := answerDNAME(q, value)
 					answers = append(answers, answer)
@@ -240,7 +243,7 @@ func answerQuestion(cfg *Config, q *dns.Question, defaultTTL, qDepth uint32) []d
 
 	if qDepth == 0 {
 		for _, answer := range answers {
-			log.Printf("  ANSWER %s\n", answer.String())
+			log.Printf("  [% 8s] ANSWER %s\n", time.Now().Sub(c.Start).String(), answer.String())
 		}
 	}
 
