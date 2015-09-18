@@ -89,7 +89,7 @@ func dnsQueryServe(cfg *Config, cache *dnscache.Cache, w dns.ResponseWriter, req
 	pending := make([]chan []dns.RR, 0, len(req.Question)) // Slice of answer channels
 	for i := range req.Question {
 		q := &req.Question[i]
-		log.Printf("DNS Query [%d/%d] %s %s from %s.\n", i+1, len(req.Question), q.Name, dns.Type(q.Qtype).String(), w.RemoteAddr())
+		log.Printf("DNS Query [%d/%d] %s %s from %s\n", i+1, len(req.Question), q.Name, dns.Type(q.Qtype).String(), w.RemoteAddr())
 		pending = append(pending, serveQuestion(cfg, cache, q, start))
 	}
 
@@ -143,7 +143,11 @@ func serveQuestion(cfg *Config, cache *dnscache.Cache, q *dns.Question, start ti
 }
 
 func answerQuestion(cfg *Config, c dnscache.Context, q *dns.Question, defaultTTL, qDepth uint32) []dns.RR {
-	log.Printf("  [%9.04fms] %-7s %s %s\n", msElapsed(c.Start, time.Now()), strings.ToUpper(c.Event.String()), q.Name, dns.Type(q.Qtype).String())
+	if c.Event == dnscache.Renewal && qDepth == 0 {
+		log.Printf("DNS Renewal     %s %s\n", q.Name, dns.Type(q.Qtype).String())
+	} else {
+		log.Printf("  [%9.04fms] %-7s %s %s\n", msElapsed(c.Start, time.Now()), strings.ToUpper(c.Event.String()), q.Name, dns.Type(q.Qtype).String())
+	}
 	answerTTL := defaultTTL
 	var answers []dns.RR
 	var secondaryAnswers []dns.RR
