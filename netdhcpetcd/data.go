@@ -1,4 +1,4 @@
-package main
+package netdhcpetcd
 
 import (
 	"errors"
@@ -9,11 +9,7 @@ import (
 	"github.com/coreos/go-etcd/etcd"
 )
 
-func (db EtcdDB) InitDHCP() {
-	db.client.CreateDir("dhcp", 0)
-}
-
-func (db EtcdDB) GetIP(ip net.IP) (IPEntry, error) {
+func (p *Provider) IP(ip net.IP) (IPEntry, error) {
 	key := etcdKeyFromIP(ip)
 	response, err := db.client.Get(key, false, false)
 	if response == nil || response.Node == nil {
@@ -26,7 +22,7 @@ func (db EtcdDB) GetIP(ip net.IP) (IPEntry, error) {
 	return IPEntry{MAC: mac}, nil
 }
 
-func (db EtcdDB) HasIP(ip net.IP) bool {
+func (p *Provider) HasIP(ip net.IP) bool {
 	key := etcdKeyFromIP(ip)
 	response, _ := db.client.Get(key, false, false)
 	if response != nil && response.Node != nil {
@@ -35,7 +31,7 @@ func (db EtcdDB) HasIP(ip net.IP) bool {
 	return false
 }
 
-func (db EtcdDB) GetMAC(mac net.HardwareAddr, cascade bool) (*MACEntry, bool, error) {
+func (p *Provider) GetMAC(mac net.HardwareAddr, cascade bool) (*MACEntry, bool, error) {
 	// TODO: First attempt to retrieve the entry from a cache of some kind (that can be dirtied)
 	// NOTE: The cache should always return a deep copy of the cached value
 	entry := MACEntry{MAC: mac}
@@ -68,7 +64,7 @@ func (db EtcdDB) GetMAC(mac net.HardwareAddr, cascade bool) (*MACEntry, bool, er
 	return &entry, true, nil
 }
 
-func (db EtcdDB) RenewLease(lease *MACEntry) error {
+func (p *Provider) RenewLease(lease *MACEntry) error {
 	// FIXME: Validate lease
 	duration := uint64(lease.Duration.Seconds() + 0.5) // Half second jitter to hide network delay
 	_, err := db.client.CompareAndSwap("dhcp/"+lease.IP.String(), lease.MAC.String(), duration, lease.MAC.String(), 0)
@@ -78,7 +74,7 @@ func (db EtcdDB) RenewLease(lease *MACEntry) error {
 	return err
 }
 
-func (db EtcdDB) CreateLease(lease *MACEntry) error {
+func (p *Provider) CreateLease(lease *MACEntry) error {
 	// FIXME: Validate lease
 	duration := uint64(lease.Duration.Seconds() + 0.5)
 	_, err := db.client.Create("dhcp/"+lease.IP.String(), lease.MAC.String(), duration)
@@ -88,7 +84,7 @@ func (db EtcdDB) CreateLease(lease *MACEntry) error {
 	return err
 }
 
-func (db EtcdDB) WriteLease(lease *MACEntry) error {
+func (p *Provider) WriteLease(lease *MACEntry) error {
 	// FIXME: Validate lease
 	// NOTE: This does not save attributes. That should probably happen in a different function.
 	duration := uint64(lease.Duration.Seconds() + 0.5) // Half second jitter to hide network delay

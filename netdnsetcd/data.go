@@ -1,4 +1,4 @@
-package main
+package netdns
 
 import (
 	"crypto/sha1"
@@ -11,16 +11,13 @@ import (
 	"github.com/coreos/go-etcd/etcd"
 )
 
-func (db EtcdDB) InitDNS() {
-	db.client.CreateDir("dns", 0)
-}
-
-func (db EtcdDB) GetDNS(name string, rrType string) (*DNSEntry, error) {
+// RR returns the resource record for the given name and type.
+func (p *Provider) RR(name string, rrType string) (*DNSEntry, error) {
 	//log.Printf("[Lookup [%s] [%s]]\n", q.Name, qType)
 	rrType = strings.ToLower(rrType)
 	key := etcdDNSKeyFromFQDN(name) + "/@" + rrType // structure the lookup key
 
-	response, err := db.client.Get(key, true, true) // do the lookup
+	response, err := p.client.Get(key, true, true) // do the lookup
 	if err != nil {
 		return nil, err
 	}
@@ -35,11 +32,12 @@ func (db EtcdDB) GetDNS(name string, rrType string) (*DNSEntry, error) {
 	return nil, ErrNotFound
 }
 
-func (db EtcdDB) HasDNS(name string, rrType string) (bool, error) {
+// HasRR returns true if a resource record exists with the given name and type.
+func (p *Provider) HasRR(name string, rrType string) (bool, error) {
 	rrType = strings.ToLower(rrType)
 	key := etcdDNSKeyFromFQDN(name) + "/@" + rrType // structure the lookup key
 
-	response, err := db.client.Get(key, false, false) // do the lookup
+	response, err := p.client.Get(key, false, false) // do the lookup
 	if err != nil {
 		return false, err
 	}
@@ -51,7 +49,8 @@ func (db EtcdDB) HasDNS(name string, rrType string) (bool, error) {
 	return false, nil
 }
 
-func (db EtcdDB) RegisterA(fqdn string, ip net.IP, exclusive bool, ttl uint32, expiration uint64) error {
+// RegisterA creates an A record for the given fully qualified domain name.
+func (p *Provider) RegisterA(fqdn string, ip net.IP, exclusive bool, ttl uint32, expiration uint64) error {
 	fqdn = cleanFQDN(fqdn)
 	ipString := ip.String()
 	ttlString := fmt.Sprintf("%d", ttl)
@@ -61,12 +60,12 @@ func (db EtcdDB) RegisterA(fqdn string, ip net.IP, exclusive bool, ttl uint32, e
 	// Register the A record
 	aKey := etcdDNSKeyFromFQDN(fqdn) + "/@a"
 	log.Printf("[REGISTER] [%s %d] %s. %d IN A %s\n", aKey, expiration, fqdn, ttl, ipString)
-	_, err := db.client.Set(aKey+"/val/"+ipHash, ipString, expiration)
+	_, err := p.client.Set(aKey+"/val/"+ipHash, ipString, expiration)
 	if err != nil {
 		return err
 	}
 	if ttl != 0 {
-		_, err := db.client.Set(aKey+"/ttl", ttlString, expiration)
+		_, err := p.client.Set(aKey+"/ttl", ttlString, expiration)
 		if err != nil {
 			return err
 		}
@@ -75,12 +74,12 @@ func (db EtcdDB) RegisterA(fqdn string, ip net.IP, exclusive bool, ttl uint32, e
 	// Register the PTR record
 	ptrKey := etcdDNSArpaKeyFromIP(ip) + "/@ptr"
 	log.Printf("[REGISTER] [%s %d] %s. %d IN A %s\n", ptrKey, expiration, fqdn, ttl, ipString)
-	_, err = db.client.Set(ptrKey+"/val/"+fqdnHash, fqdn, expiration)
+	_, err = p.client.Set(ptrKey+"/val/"+fqdnHash, fqdn, expiration)
 	if err != nil {
 		return err
 	}
 	if ttl != 0 {
-		_, err := db.client.Set(aKey+"/ttl", ttlString, expiration)
+		_, err := p.client.Set(aKey+"/ttl", ttlString, expiration)
 		if err != nil {
 			return err
 		}

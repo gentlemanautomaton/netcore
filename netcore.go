@@ -4,28 +4,20 @@ import (
 	"flag"
 	"log"
 	"os"
-	"strings"
 )
-
-var etcdServers = flag.String("etcd", "", "Comma-separated list of etcd servers.")
 
 func init() {
 	flag.Parse()
 }
 
 func main() {
-	if len(*etcdServers) == 0 {
-		if len(os.Getenv("ETCD_PORT")) > 0 {
-			*etcdServers = strings.Replace(os.Getenv("ETCD_PORT"), "tcp://", "http://", 1)
-		} else {
-			*etcdServers = "etcd" // just some default hostname that Docker or otherwise might use
-		}
-	}
-	db := NewEtcdDB(*etcdServers)
-
-	log.Println("PRECONFIG")
+	log.Println("INIT PRECONFIG")
+	etcdclient := etcdClient()
+	dhcpProvider := netdhcpetcd.NewProvider(etcdclient)
+	dhcpConfig := dhcpProvider.Config()
+	dnsProvider := netdnsetcd.NewProvider(etcdclient)
 	cfg, err := db.GetConfig()
-	log.Println("POSTCONFIG")
+	log.Println("INIT POSTCONFIG")
 
 	if err != nil {
 		log.Printf("Configuration failed: %s\n", err)

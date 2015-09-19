@@ -1,29 +1,26 @@
 package main
 
 import (
+	"flag"
+	"os"
 	"strings"
 
 	"github.com/coreos/go-etcd/etcd"
 )
 
-type EtcdDB struct {
-	client *etcd.Client
-}
+var etcdServers = flag.String("etcd", "", "Comma-separated list of etcd servers.")
 
-func NewEtcdDB(serverList string) DB {
+func etcdClient() etcd.Client {
+	if len(*etcdServers) == 0 {
+		if len(os.Getenv("ETCD_PORT")) > 0 {
+			*etcdServers = strings.Replace(os.Getenv("ETCD_PORT"), "tcp://", "http://", 1)
+		} else {
+			*etcdServers = "etcd" // just some default hostname that Docker or otherwise might use
+		}
+	}
 	var servers []string
-	if serverList != "" {
-		servers = strings.Split(serverList, ",")
+	if etcdServers != "" {
+		servers = strings.Split(etcdServers, ",")
 	}
-	client := etcd.NewClient(servers)
-	client.SetConsistency("WEAK_CONSISTENCY")
-	db := EtcdDB{client}
-	return db
-}
-
-func etcdKeyNotFound(err error) bool {
-	if err == nil {
-		return false
-	}
-	return strings.Contains(err.Error(), "Key not found")
+	return etcd.NewClient(servers)
 }

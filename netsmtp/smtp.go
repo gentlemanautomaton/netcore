@@ -1,4 +1,4 @@
-package main
+package netsmtp
 
 // import (
 // 	"bitbucket.org/chrj/smtpd"

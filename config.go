@@ -1,8 +1,7 @@
-package main
+package old
 
 import (
 	"errors"
-	"flag"
 	"net"
 	"sync"
 	"time"
@@ -31,13 +30,6 @@ type ConfigProvider interface {
 	//Get(key string) string
 	GetConfig() (*Config, error)
 }
-
-var setZone = flag.String("setZone", "", "Overwrite (permanently) the zone that this machine is in.")
-var setDHCPIP = flag.String("setDHCPIP", "", "Overwrite (permanently) the DHCP hosting IP for this machine (or set it to empty to disable DHCP).")
-var setDHCPNIC = flag.String("setDHCPNIC", "", "Overwrite (permanently) the DHCP hosting NIC name for this machine (or set it to empty to disable DHCP).")
-var setDHCPSubnet = flag.String("setDHCPSubnet", "", "Overwrite (permanently) the DHCP subnet for this zone (requires setZone flag or it'll no-op).")
-var setDHCPLeaseDuration = flag.String("setDHCPLeaseDuration", "", "Overwrite (permanently) the default DHCP lease duration for this zone (requires setZone flag or it'll no-op).")
-var setDHCPTFTP = flag.String("setDHCPTFTP", "", "Overwrite (permanently) the DHCP TFTP Server Name for this machine (or set it to empty to disable DHCP).")
 
 // ErrNoZone is an error returned during config init to indicate that the host has not been assigned to a zone in etcd keyed off of its hostname
 var ErrNoZone = errors.New("This host has not been assigned to a zone.")

@@ -1,4 +1,4 @@
-package main
+package netdhcp
 
 import (
 	"encoding/binary"
@@ -10,68 +10,48 @@ import (
 	"github.com/krolaw/dhcp4"
 )
 
-type DHCPDB interface {
-	InitDHCP()
-	GetIP(net.IP) (IPEntry, error)
-	HasIP(net.IP) bool
-	GetMAC(mac net.HardwareAddr, cascade bool) (entry *MACEntry, found bool, err error)
-	RenewLease(lease *MACEntry) error
-	CreateLease(lease *MACEntry) error
-	WriteLease(lease *MACEntry) error
+// Service provides netcore DHCP services.
+type Service struct {
+	instance string
+	cfg      Config
+	p        Provider
+	done     chan error
 }
 
-// DHCPService is the DHCP server instance
-type DHCPService struct {
-	ip             net.IP
-	domain         string
-	subnet         *net.IPNet
-	guestPool      *net.IPNet
-	leaseDuration  time.Duration
-	defaultOptions dhcp4.Options // FIXME: make different options per pool?
-	db             DB
-}
+// NewService creates a new netcore DHCP service.
+func NewService(p Provider) *Service {
+	s := &Service{
+		p:    p,
+		done: make(chan error, 1),
+	}
 
-type IPEntry struct {
-	MAC net.HardwareAddr
-}
-
-type MACEntry struct {
-	MAC      net.HardwareAddr
-	IP       net.IP
-	Duration time.Duration
-	Attr     map[string]string
-}
-
-const minimumLeaseDuration = 60 * time.Second // FIXME: put this in a config
-
-func dhcpSetup(cfg *Config) chan error {
-	cfg.db.InitDHCP()
-	exit := make(chan error, 1)
 	go func() {
-		d := &DHCPService{
-			ip:            cfg.DHCPIP(),
-			leaseDuration: cfg.DHCPLeaseDuration(),
-			db:            cfg.db,
-			subnet:        cfg.Subnet(),
-			guestPool:     cfg.DHCPSubnet(),
-			domain:        cfg.Domain(),
-			defaultOptions: dhcp4.Options{
-				dhcp4.OptionSubnetMask:       net.IP(cfg.Subnet().Mask),
-				dhcp4.OptionRouter:           cfg.Gateway(),
-				dhcp4.OptionDomainNameServer: cfg.DHCPIP(),
-			},
+		if err := s.init(); err != nil {
+			s.done <- err
+			return
 		}
-		dhcpTFTP := cfg.DHCPTFTP()
-		if dhcpTFTP != "" {
-			d.defaultOptions[dhcp4.OptionTFTPServerName] = []byte(dhcpTFTP)
-		}
-		exit <- dhcp4.ListenAndServeIf(cfg.DHCPNIC(), d)
+		s.done <- dhcp4.ListenAndServeIf(s.cfg.NIC(), s)
 	}()
-	return exit
+
+	return s
+}
+
+func (s *Service) init() error {
+	// FIXME: Don't do this Init(), but instead handle initial setup via the CLI
+	if err := s.p.Init(); err != nil {
+		return err
+	}
+	cfg, err := s.p.Config(s.instance)
+	if err != nil {
+		return err
+	}
+	s.cfg = cfg
+	s.done <- dhcp4.ListenAndServeIf(s.cfg.NIC(), s)
+	return nil
 }
 
 // ServeDHCP is called by dhcp4.ListenAndServe when the service is started
-func (d *DHCPService) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, reqOptions dhcp4.Options) (response dhcp4.Packet) {
+func (s *Service) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, reqOptions dhcp4.Options) (response dhcp4.Packet) {
 	switch msgType {
 	case dhcp4.Discover:
 		// RFC 2131 4.3.1
@@ -79,21 +59,21 @@ func (d *DHCPService) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, 
 		mac := packet.CHAddr()
 
 		// Check MAC blacklist
-		if !d.isMACPermitted(mac) {
+		if !s.isMACPermitted(mac) {
 			log.Printf("DHCP Discover from %s\n is not permitted", mac.String())
 			return nil
 		}
 		log.Printf("DHCP Discover from %s\n", mac.String())
 
 		// Look up the MAC entry with cascaded attributes
-		lease, found, err := d.db.GetMAC(mac, true)
+		lease, found, err := s.p.MAC(mac, true)
 		if err != nil {
 			return nil
 		}
 
 		// Existing Lease
 		if found {
-			options := d.getOptionsFromMAC(lease)
+			options := s.getOptionsFromMAC(lease)
 			log.Printf("DHCP Discover from %s (we offer %s from current lease)\n", lease.MAC.String(), lease.IP.String())
 			// for x, y := range reqOptions {
 			// 	log.Printf("\tR[%v] %v %s\n", x, y, y)
@@ -101,13 +81,13 @@ func (d *DHCPService) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, 
 			// for x, y := range options {
 			// 	log.Printf("\tO[%v] %v %s\n", x, y, y)
 			// }
-			return dhcp4.ReplyPacket(packet, dhcp4.Offer, d.ip.To4(), lease.IP.To4(), d.getLeaseDurationForRequest(reqOptions, lease.Duration), options.SelectOrderOrAll(reqOptions[dhcp4.OptionParameterRequestList]))
+			return dhcp4.ReplyPacket(packet, dhcp4.Offer, s.cfg.IP().To4(), lease.IP.To4(), s.getLeaseDurationForRequest(reqOptions, lease.Duration), options.SelectOrderOrAll(reqOptions[dhcp4.OptionParameterRequestList]))
 		}
 
 		// New Lease
-		ip := d.getIPFromPool()
+		ip := s.getIPFromPool()
 		if ip != nil {
-			options := d.getOptionsFromMAC(lease)
+			options := s.getOptionsFromMAC(lease)
 			log.Printf("DHCP Discover from %s (we offer %s from pool)\n", mac.String(), ip.String())
 			// for x, y := range reqOptions {
 			// 	log.Printf("\tR[%v] %v %s\n", x, y, y)
@@ -115,7 +95,7 @@ func (d *DHCPService) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, 
 			// for x, y := range options {
 			// 	log.Printf("\tO[%v] %v %s\n", x, y, y)
 			// }
-			return dhcp4.ReplyPacket(packet, dhcp4.Offer, d.ip.To4(), ip.To4(), d.getLeaseDurationForRequest(reqOptions, d.leaseDuration), options.SelectOrderOrAll(reqOptions[dhcp4.OptionParameterRequestList]))
+			return dhcp4.ReplyPacket(packet, dhcp4.Offer, s.cfg.IP().To4(), ip.To4(), s.getLeaseDurationForRequest(reqOptions, s.cfg.LeaseDuration()), options.SelectOrderOrAll(reqOptions[dhcp4.OptionParameterRequestList]))
 		}
 
 		log.Printf("DHCP Discover from %s (no offer due to no addresses available in pool)\n", mac.String())
@@ -130,13 +110,13 @@ func (d *DHCPService) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, 
 		mac := packet.CHAddr()
 
 		// Check MAC blacklist
-		if !d.isMACPermitted(mac) {
+		if !s.isMACPermitted(mac) {
 			log.Printf("DHCP Request from %s\n is not permitted", mac.String())
 			return nil
 		}
 
 		// Check IP presence
-		state, requestedIP := d.getRequestState(packet, reqOptions)
+		state, requestedIP := s.getRequestState(packet, reqOptions)
 		log.Printf("DHCP Request (%s) from %s...\n", state, mac.String())
 		if len(requestedIP) == 0 || requestedIP.IsUnspecified() { // no IP provided at all... why? FIXME
 			log.Printf("DHCP Request (%s) from %s (empty IP, so we're just ignoring this request)\n", state, mac.String())
@@ -150,61 +130,61 @@ func (d *DHCPService) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, 
 		}
 
 		// Check IP subnet
-		if !d.subnet.Contains(requestedIP) {
+		if !s.cfg.Subnet().Contains(requestedIP) {
 			log.Printf("DHCP Request (%s) from %s wanting %s (we reject due to wrong subnet)\n", state, mac.String(), requestedIP.String())
-			return dhcp4.ReplyPacket(packet, dhcp4.NAK, d.ip.To4(), nil, 0, nil)
+			return dhcp4.ReplyPacket(packet, dhcp4.NAK, s.cfg.IP().To4(), nil, 0, nil)
 		}
 
 		// Check Target Server
 		targetServerIP := packet.SIAddr()
 		if len(targetServerIP) > 0 && !targetServerIP.IsUnspecified() {
 			log.Printf("DHCP Request (%s) from %s wanting %s is in response to a DHCP offer from %s\n", state, mac.String(), requestedIP.String(), targetServerIP.String())
-			if d.ip.Equal(targetServerIP) {
+			if s.cfg.IP().Equal(targetServerIP) {
 				return nil
 			}
 		}
 
 		// Process Request
 		log.Printf("DHCP Request (%s) from %s wanting %s...\n", state, mac.String(), requestedIP.String())
-		lease, found, err := d.db.GetMAC(mac, true)
+		lease, found, err := s.p.MAC(mac, true)
 		if err != nil {
 			return nil
 		}
 
 		if found {
 			// Existing Lease
-			lease.Duration = d.getLeaseDurationForRequest(reqOptions, d.leaseDuration)
+			lease.Duration = s.getLeaseDurationForRequest(reqOptions, s.cfg.LeaseDuration())
 			if lease.IP.Equal(requestedIP) {
-				err = d.db.RenewLease(lease)
+				err = s.p.RenewLease(lease)
 			} else {
 				log.Printf("DHCP Request (%s) from %s wanting %s (we reject due to lease mismatch, should be %s)\n", state, lease.MAC.String(), requestedIP.String(), lease.IP.String())
-				return dhcp4.ReplyPacket(packet, dhcp4.NAK, d.ip.To4(), nil, 0, nil)
+				return dhcp4.ReplyPacket(packet, dhcp4.NAK, s.cfg.IP().To4(), nil, 0, nil)
 			}
 		} else {
 			// Check IP subnet is within the guestPool (we don't want users requesting non-pool addresses unless we assigned it to their MAC, administratively)
-			if !d.guestPool.Contains(requestedIP) {
+			if !s.cfg.GuestPool().Contains(requestedIP) {
 				log.Printf("DHCP Request (%s) from %s wanting %s (we reject due to not being within the guestPool)\n", state, mac.String(), requestedIP.String())
-				return dhcp4.ReplyPacket(packet, dhcp4.NAK, d.ip.To4(), nil, 0, nil)
+				return dhcp4.ReplyPacket(packet, dhcp4.NAK, s.cfg.IP().To4(), nil, 0, nil)
 			}
 
 			// New lease
 			lease = &MACEntry{
 				MAC:      mac,
 				IP:       requestedIP,
-				Duration: d.getLeaseDurationForRequest(reqOptions, d.leaseDuration),
+				Duration: s.getLeaseDurationForRequest(reqOptions, s.cfg.LeaseDuration()),
 			}
-			err = d.db.CreateLease(lease)
+			err = s.p.CreateLease(lease)
 		}
 
 		if err == nil {
-			d.maintainDNSRecords(lease, packet, reqOptions) // TODO: Move this?
-			options := d.getOptionsFromMAC(lease)
+			s.maintainDNSRecords(lease, packet, reqOptions) // TODO: Move this?
+			options := s.getOptionsFromMAC(lease)
 			log.Printf("DHCP Request (%s) from %s wanting %s (we agree)\n", state, mac.String(), requestedIP.String())
-			return dhcp4.ReplyPacket(packet, dhcp4.ACK, d.ip.To4(), requestedIP.To4(), lease.Duration, options.SelectOrderOrAll(reqOptions[dhcp4.OptionParameterRequestList]))
+			return dhcp4.ReplyPacket(packet, dhcp4.ACK, s.cfg.IP().To4(), requestedIP.To4(), lease.Duration, options.SelectOrderOrAll(reqOptions[dhcp4.OptionParameterRequestList]))
 		}
 
 		log.Printf("DHCP Request (%s) from %s wanting %s (we reject due to address collision)\n", state, mac.String(), requestedIP.String())
-		return dhcp4.ReplyPacket(packet, dhcp4.NAK, d.ip.To4(), nil, 0, nil)
+		return dhcp4.ReplyPacket(packet, dhcp4.NAK, s.cfg.IP().To4(), nil, 0, nil)
 
 	case dhcp4.Decline:
 		// RFC 2131 4.3.3
@@ -228,11 +208,11 @@ func (d *DHCPService) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, 
 		ip := packet.CIAddr()
 		if len(ip) > 0 && !ip.IsUnspecified() {
 			log.Printf("DHCP Inform from %s for %s \n", mac.String(), ip.String())
-			if len(ip) == net.IPv4len && d.guestPool.Contains(ip) {
-				entry, found, _ := d.db.GetMAC(mac, true)
+			if len(ip) == net.IPv4len && s.cfg.GuestPool().Contains(ip) {
+				entry, found, _ := s.p.MAC(mac, true)
 				if found {
-					options := d.getOptionsFromMAC(entry)
-					return informReplyPacket(packet, dhcp4.ACK, d.ip.To4(), options.SelectOrderOrAll(reqOptions[dhcp4.OptionParameterRequestList]))
+					options := s.getOptionsFromMAC(entry)
+					return informReplyPacket(packet, dhcp4.ACK, s.cfg.IP().To4(), options.SelectOrderOrAll(reqOptions[dhcp4.OptionParameterRequestList]))
 				}
 			}
 		}
@@ -241,12 +221,12 @@ func (d *DHCPService) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, 
 	return nil
 }
 
-func (d *DHCPService) isMACPermitted(mac net.HardwareAddr) bool {
+func (s *Service) isMACPermitted(mac net.HardwareAddr) bool {
 	// TODO: determine whether or not this MAC should be permitted to get an IP at all (blacklist? whitelist?)
 	return true
 }
 
-func (d *DHCPService) getRequestState(packet dhcp4.Packet, reqOptions dhcp4.Options) (string, net.IP) {
+func (s *Service) getRequestState(packet dhcp4.Packet, reqOptions dhcp4.Options) (string, net.IP) {
 	state := "NEW"
 	requestedIP := net.IP(reqOptions[dhcp4.OptionRequestedIPAddress])
 	if len(requestedIP) == 0 || requestedIP.IsUnspecified() { // empty
@@ -256,7 +236,7 @@ func (d *DHCPService) getRequestState(packet dhcp4.Packet, reqOptions dhcp4.Opti
 	return state, requestedIP
 }
 
-func (d *DHCPService) getLeaseDurationForRequest(reqOptions dhcp4.Options, defaultDuration time.Duration) time.Duration {
+func (s *Service) getLeaseDurationForRequest(reqOptions dhcp4.Options, defaultDuration time.Duration) time.Duration {
 	// If a requested lease duration is accepted by policy we hand it back to them
 	// If a requested lease duration is not accepted by policy we constrain it to the policy's minimum and maximum
 	// If a lease duration was not requested then we give them the default duration provided to this function
@@ -267,9 +247,9 @@ func (d *DHCPService) getLeaseDurationForRequest(reqOptions dhcp4.Options, defau
 	leaseBytes := reqOptions[dhcp4.OptionIPAddressLeaseTime]
 	if len(leaseBytes) == 4 {
 		leaseDuration = time.Duration(binary.BigEndian.Uint32(leaseBytes)) * time.Second
-		if leaseDuration > d.leaseDuration {
+		if leaseDuration > s.cfg.LeaseDuration() {
 			// The requested lease duration is too long so we give them the maximum allowed by policy
-			leaseDuration = d.leaseDuration
+			leaseDuration = s.cfg.LeaseDuration()
 		}
 	}
 
@@ -281,20 +261,21 @@ func (d *DHCPService) getLeaseDurationForRequest(reqOptions dhcp4.Options, defau
 	return leaseDuration
 }
 
-func (d *DHCPService) getIPFromPool() net.IP {
+func (s *Service) getIPFromPool() net.IP {
 	// locate an unused IP address (can this be more efficient?  yes!  FIXME)
 	// TODO: Create a channel and spawn a goproc with something like this function to feed it; then have the server pull addresses from that channel
-	for ip := dhcp4.IPAdd(d.guestPool.IP, 1); d.guestPool.Contains(ip); ip = dhcp4.IPAdd(ip, 1) {
+	gp := s.cfg.GuestPool()
+	for ip := dhcp4.IPAdd(gp.IP, 1); gp.Contains(ip); ip = dhcp4.IPAdd(ip, 1) {
 		//log.Println(ip.String())
-		if !d.db.HasIP(ip) { // this means that the IP is not already occupied
+		if !s.p.HasIP(ip) { // this means that the IP is not already occupied
 			return ip
 		}
 	}
 	return nil
 }
 
-func (d *DHCPService) maintainDNSRecords(entry *MACEntry, packet dhcp4.Packet, reqOptions dhcp4.Options) {
-	options := d.getOptionsFromMAC(entry)
+func (s *Service) maintainDNSRecords(entry *MACEntry, packet dhcp4.Packet, reqOptions dhcp4.Options) {
+	options := s.getOptionsFromMAC(entry)
 	if domain, ok := options[dhcp4.OptionDomainName]; ok {
 		// FIXME:  danger!  we're mixing systems here...  if we keep this up, we will have spaghetti!
 		name := ""
@@ -306,7 +287,7 @@ func (d *DHCPService) maintainDNSRecords(entry *MACEntry, packet dhcp4.Packet, r
 		if name != "" {
 			host := strings.ToLower(strings.Join([]string{name, string(domain)}, "."))
 			// TODO: Pick a TTL for the record and use it
-			d.db.RegisterA(host, entry.IP, false, 0, uint64(d.leaseDuration.Seconds()+0.5))
+			s.p.RegisterA(host, entry.IP, false, 0, uint64(s.cfg.LeaseDuration().Seconds()+0.5))
 		} else {
 			log.Println(">> No host name")
 		}
@@ -315,12 +296,13 @@ func (d *DHCPService) maintainDNSRecords(entry *MACEntry, packet dhcp4.Packet, r
 	}
 }
 
-func (d *DHCPService) getOptionsFromMAC(entry *MACEntry) dhcp4.Options {
+func (s *Service) getOptionsFromMAC(entry *MACEntry) dhcp4.Options {
 	options := dhcp4.Options{}
+	defaultOptions := s.cfg.Options()
 
-	for i := range d.defaultOptions {
-		options[i] = d.defaultOptions[i]
-		log.Printf("OPTION:[%d][%+v]\n", i, d.defaultOptions[i])
+	for i := range defaultOptions {
+		options[i] = defaultOptions[i]
+		log.Printf("OPTION:[%d][%+v]\n", i, defaultOptions[i])
 	}
 
 	{ // Subnet Mask
@@ -370,8 +352,8 @@ func (d *DHCPService) getOptionsFromMAC(entry *MACEntry) dhcp4.Options {
 			}
 		}
 		if len(options[dhcp4.OptionDomainName]) == 0 {
-			if d.domain != "" {
-				options[dhcp4.OptionDomainName] = []byte(d.domain)
+			if domain := s.cfg.Domain(); domain != "" {
+				options[dhcp4.OptionDomainName] = []byte(domain)
 			} else {
 				delete(options, dhcp4.OptionDomainName)
 			}

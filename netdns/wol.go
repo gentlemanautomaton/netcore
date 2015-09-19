@@ -1,11 +1,7 @@
-package main
+package netdns
 
-import (
-	"net"
-
-	"github.com/sabhiram/go-wol"
-)
-
+// FIXME: Restore WOL functionality
+/*
 func wakeByMAC(cfg *Config, mac net.HardwareAddr) error {
 	return wol.SendMagicPacket(mac.String(), "255.255.255.255:9", "")
 }
@@ -31,3 +27,4 @@ func wakeByHostname(cfg *Config, hostname string) error {
 	}
 	return err
 }
+*/

@@ -1,0 +1,201 @@
+package netdhcp
+
+import (
+	"net"
+	"time"
+
+	"github.com/krolaw/dhcp4"
+)
+
+const minimumLeaseDuration = 60 * time.Second // FIXME: put this in a config
+
+// Config provides all of the necessary configuration context for the operation
+// of a netcore DNS instance.
+type Config interface {
+	Hostname() string
+	NIC() string
+	IP() net.IP
+	Enabled() bool
+	Network() string
+	Subnet() *net.IPNet
+	Gateway() net.IP
+	Domain() string
+	TFTP() string
+	LeaseDuration() time.Duration
+	GuestPool() *net.IPNet
+	Options() dhcp4.Options
+}
+
+// NewConfig creates an immutable instance of the Config interface from the
+// given mutable data.
+func NewConfig(c Cfg) Config {
+	return &config{c}
+}
+
+// DefaultConfig returns a Config interface with the default values for netcore.
+func DefaultConfig() Config {
+	return NewConfig(Cfg{
+	// TODO: Create these!
+	})
+}
+
+// Cfg defines a standard set of fields which can be turned into an
+// immutable Config instance via the NewConfig function.
+type Cfg struct {
+	Hostname      string
+	NIC           string
+	IP            net.IP
+	Enabled       bool
+	Network       string
+	Subnet        *net.IPNet
+	Gateway       net.IP
+	Domain        string
+	TFTP          string
+	LeaseDuration time.Duration
+	GuestPool     *net.IPNet
+	Options       dhcp4.Options
+}
+
+type config struct {
+	x Cfg
+}
+
+func (c config) Hostname() string {
+	return c.x.Hostname
+}
+
+func (c config) NIC() string {
+	return c.x.NIC
+}
+
+func (c config) IP() net.IP {
+	return c.x.IP
+}
+
+func (c config) Enabled() bool {
+	return c.x.Enabled
+}
+
+func (c config) Network() string {
+	return c.x.Network
+}
+
+func (c config) Subnet() *net.IPNet {
+	return c.x.Subnet
+}
+
+func (c config) Gateway() net.IP {
+	return c.x.IP
+}
+
+func (c config) Domain() string {
+	return c.x.Domain
+}
+
+func (c config) TFTP() string {
+	return c.x.TFTP
+}
+
+func (c config) LeaseDuration() time.Duration {
+	return c.x.LeaseDuration
+}
+
+func (c config) GuestPool() *net.IPNet {
+	return c.x.GuestPool
+}
+
+func (c config) Options() dhcp4.Options {
+	return c.x.Options
+}
+
+// Reference:
+/*
+
+// ServiceOld is the DHCP server instance
+type ServiceOld struct {
+	ip             net.IP
+	domain         string
+	subnet         *net.IPNet
+	guestPool      *net.IPNet
+	leaseDuration  time.Duration
+	defaultOptions dhcp4.Options // FIXME: make different options per pool?
+}
+
+d := &DHCPService{
+	ip:            cfg.DHCPIP(),
+	leaseDuration: cfg.DHCPLeaseDuration(),
+	db:            cfg.db,
+	subnet:        cfg.Subnet(),
+	guestPool:     cfg.DHCPSubnet(),
+	domain:        cfg.Domain(),
+	defaultOptions: dhcp4.Options{
+		dhcp4.OptionSubnetMask:       net.IP(cfg.Subnet().Mask),
+		dhcp4.OptionRouter:           cfg.Gateway(),
+		dhcp4.OptionDomainNameServer: cfg.DHCPIP(),
+	},
+}
+dhcpTFTP := cfg.DHCPTFTP()
+if dhcpTFTP != "" {
+	d.defaultOptions[dhcp4.OptionTFTPServerName] = []byte(dhcpTFTP)
+}
+*/
+
+/*
+// Config provides all of the necessary configuration context for the operation
+// of a netcore DHCP instance.
+type Config struct {
+	Global  GlobalConfig
+	Network NetworkConfig
+	Server  ServerConfig
+}
+
+// GlobalConfig contains global DHCP configuration.
+type GlobalConfig struct {
+	Netname       string
+	NIC           string
+	LeaseDuration time.Duration
+}
+
+// NetworkConfig contains configuration for a DHCP network.
+type NetworkConfig struct {
+	Netname       string
+	Subnet        *net.IPNet
+	Gateway       net.IP
+	Domain        string
+	TFTP          string
+	LeaseDuration time.Duration
+	Pools         []PoolConfig
+}
+
+// PoolConfig contains configuration for a DHCP pool.
+type PoolConfig struct {
+	Subnet *net.IPNet
+}
+
+// ServerConfig contains configuration for a DHCP server.
+type ServerConfig struct {
+	Hostname string
+	Netname  string
+	NIC      string
+	IP       net.IP
+	Enabled  bool
+}
+
+// Hostname returns the hostname of the instance for which this configuration
+// data is intended.
+func (c *Config) Hostname() string {
+	return c.Server.Hostname
+}
+
+// Netname returns the name of the network that the config applies to.
+func (c *Config) Netname() string {
+	switch {
+	case c.Server.Netname != "":
+		return c.Server.Netname
+	case c.Global.Netname != "":
+		return c.Global.Netname
+	default:
+		return ""
+	}
+}
+*/

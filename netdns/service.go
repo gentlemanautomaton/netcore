@@ -1,7 +1,6 @@
-package main
+package netdns
 
 import (
-	"errors"
 	"log"
 	"net"
 	"regexp"
@@ -13,67 +12,57 @@ import (
 	"github.com/miekg/dns"
 )
 
-type DNSDB interface {
-	InitDNS()
-	GetDNS(name string, rtype string) (*DNSEntry, error)
-	HasDNS(name string, rtype string) (bool, error)
-	RegisterA(fqdn string, ip net.IP, exclusive bool, ttl uint32, expiration uint64) error
+// Service provides netcore DNS services.
+type Service struct {
+	instance string
+	cfg      Config
+	p        Provider
+	cache    *dnscache.Cache
+	done     chan error
 }
 
-type DNSEntry struct {
-	TTL    uint32
-	Values []DNSValue
-	Meta   map[string]string
+// NewService creates a new netcore DNS service.
+func NewService(p Provider, instance string) *Service {
+	s := &Service{
+		instance: instance,
+		p:        p,
+		done:     make(chan error, 1),
+	}
+
+	go func() {
+		if err := s.init(); err != nil {
+			s.done <- err
+			return
+		}
+		go func() {
+			s.done <- dns.ListenAndServe("0.0.0.0:53", "tcp", nil) // TODO: should use cfg to define the listening ip/port
+		}()
+
+		go func() {
+			s.done <- dns.ListenAndServe("0.0.0.0:53", "udp", nil) // TODO: should use cfg to define the listening ip/port
+		}()
+	}()
+
+	return s
 }
 
-type DNSValue struct {
-	Expiration *time.Time
-	TTL        uint32
-	Value      string
-	Attr       map[string]string
-}
+func (s *Service) init() error {
+	cfg, err := s.p.Config(s.instance)
+	if err != nil {
+		return err
+	}
+	s.cfg = cfg
 
-type dnsEntryResult struct {
-	Entry *DNSEntry
-	Err   error
-	RType uint16
-}
-
-var (
-	ErrNotFound = errors.New("not found")
-)
-
-const (
-	dnsCacheBufferSize = 512
-)
-
-func dnsSetup(cfg *Config) chan error {
-	log.Println("DNSSETUP")
-
-	// FIXME: Make the default TTL into a configuration parameter
-	// FIXME: Check whether this default is being applied to unanswered queries
-	defaultTTL := uint32(10800) // this is the default TTL = 3 hours
-
-	cache := dnscache.New(dnsCacheBufferSize, cfg.DNSCacheMaxTTL(), cfg.DNSCacheMissingTTL(), func(c dnscache.Context, q dns.Question) []dns.RR {
-		return answerQuestion(cfg, c, &q, defaultTTL, 0)
+	cacheRetentionNotFound := time.Second * 30 // FIXME: Get rid of this once dnscache is updated to follow spec
+	s.cache = dnscache.New(dnsCacheBufferSize, cfg.CacheRetention(), cacheRetentionNotFound, func(c dnscache.Context, q dns.Question) []dns.RR {
+		return s.answerQuestion(c, &q, 0)
 	})
 
-	dns.HandleFunc(".", func(w dns.ResponseWriter, req *dns.Msg) { dnsQueryServe(cfg, cache, w, req) })
-	cfg.db.InitDNS()
-	exit := make(chan error, 1)
-
-	go func() {
-		exit <- dns.ListenAndServe("0.0.0.0:53", "tcp", nil) // TODO: should use cfg to define the listening ip/port
-	}()
-
-	go func() {
-		exit <- dns.ListenAndServe("0.0.0.0:53", "udp", nil) // TODO: should use cfg to define the listening ip/port
-	}()
-
-	return exit
+	dns.HandleFunc(".", func(w dns.ResponseWriter, req *dns.Msg) { s.dnsQueryServe(w, req) })
+	return s.p.Init() // FIXME: Don't do this, but instead handle initial setup via the CLI
 }
 
-func dnsQueryServe(cfg *Config, cache *dnscache.Cache, w dns.ResponseWriter, req *dns.Msg) {
+func (s *Service) dnsQueryServe(w dns.ResponseWriter, req *dns.Msg) {
 	start := time.Now()
 
 	if req.MsgHdr.Response == true { // supposed responses sent to us are bogus
@@ -90,7 +79,7 @@ func dnsQueryServe(cfg *Config, cache *dnscache.Cache, w dns.ResponseWriter, req
 	for i := range req.Question {
 		q := &req.Question[i]
 		log.Printf("DNS Query [%d/%d] %s %s from %s\n", i+1, len(req.Question), q.Name, dns.Type(q.Qtype).String(), w.RemoteAddr())
-		pending = append(pending, serveQuestion(cfg, cache, q, start))
+		pending = append(pending, s.serveQuestion(q, start))
 	}
 
 	// Assemble answers according to the order of the questions
@@ -116,19 +105,22 @@ func dnsQueryServe(cfg *Config, cache *dnscache.Cache, w dns.ResponseWriter, req
 	w.WriteMsg(failMsg)
 }
 
-func serveQuestion(cfg *Config, cache *dnscache.Cache, q *dns.Question, start time.Time) chan []dns.RR {
+func (s *Service) serveQuestion(q *dns.Question, start time.Time) chan []dns.RR {
 	output := make(chan []dns.RR)
 	var answers []dns.RR
 
 	// is this a WOL query?
-	if isWOLTrigger(q) {
-		answer := processWOL(cfg, q)
-		answers = append(answers, answer)
-	}
+	// FIXME: Find a suitable design for this in light of the refactor
+	/*
+		if isWOLTrigger(q) {
+			answer := processWOL(cfg, q)
+			answers = append(answers, answer)
+		}
+	*/
 
 	rc := make(chan []dns.RR)
 
-	cache.Lookup(dnscache.Request{
+	s.cache.Lookup(dnscache.Request{
 		Question:     *q,
 		Start:        start,
 		ResponseChan: rc,
@@ -142,18 +134,18 @@ func serveQuestion(cfg *Config, cache *dnscache.Cache, q *dns.Question, start ti
 	return output
 }
 
-func answerQuestion(cfg *Config, c dnscache.Context, q *dns.Question, defaultTTL, qDepth uint32) []dns.RR {
+func (s *Service) answerQuestion(c dnscache.Context, q *dns.Question, qDepth uint32) []dns.RR {
 	if c.Event == dnscache.Renewal && qDepth == 0 {
 		log.Printf("DNS Renewal     %s %s\n", q.Name, dns.Type(q.Qtype).String())
 	} else {
 		log.Printf("  [%9.04fms] %-7s %s %s\n", msElapsed(c.Start, time.Now()), strings.ToUpper(c.Event.String()), q.Name, dns.Type(q.Qtype).String())
 	}
-	answerTTL := defaultTTL
+	answerTTL := uint32(s.cfg.DefaultTTL() / time.Second)
 	var answers []dns.RR
 	var secondaryAnswers []dns.RR
 	var wouldLikeForwarder = true
 
-	entry, rrType, err := fetchBestEntry(cfg, q)
+	entry, rrType, err := s.fetchBestEntry(q)
 
 	if err == nil {
 		wouldLikeForwarder = false
@@ -207,7 +199,7 @@ func answerQuestion(cfg *Config, c dnscache.Context, q *dns.Question, defaultTTL
 					answers = append(answers, answer)
 					q2 := q
 					q2.Name = target // replace question's name with new name
-					secondaryAnswers = append(secondaryAnswers, answerQuestion(cfg, c, q2, defaultTTL, qDepth+1)...)
+					secondaryAnswers = append(secondaryAnswers, s.answerQuestion(c, q2, qDepth+1)...)
 				case dns.TypeDNAME:
 					answer := answerDNAME(q, value)
 					answers = append(answers, answer)
@@ -245,27 +237,21 @@ func answerQuestion(cfg *Config, c dnscache.Context, q *dns.Question, defaultTTL
 	// check to see if we host this zone; if yes, don't allow use of ext forwarders
 	// ... also, check to see if we hit a DNAME so we can handle that aliasing
 	// FIXME: Only forward if we are configured as a forwarder
-	if wouldLikeForwarder && !haveAuthority(cfg, q) {
+	if wouldLikeForwarder && !s.haveAuthority(q) {
 		log.Printf("  [%9.04fms] FORWARD %s %s\n", msElapsed(c.Start, time.Now()), q.Name, dns.Type(q.Qtype).String())
-		answers = append(answers, forwardQuestion(q, cfg.DNSForwarders())...)
+		answers = append(answers, forwardQuestion(q, s.cfg.Forwarders())...)
 	}
+
+	// FIXME: Check whether a default TTL can and should be applied to unanswered queries
 
 	return answers
 }
 
-// msElapsed returns the number of milliseconds that have elapsed between now
-// and start as a float64
-func msElapsed(start, now time.Time) float64 {
-	elapsed := now.Sub(start)
-	seconds := elapsed.Seconds()
-	return seconds * 1000
-}
-
 // fetchBestEntry will return the most suitable entry from the DNS database for
 // the given query. If no suitable entry is found it will return ErrNotFound.
-func fetchBestEntry(cfg *Config, q *dns.Question) (entry *DNSEntry, rrType uint16, err error) {
+func (s *Service) fetchBestEntry(q *dns.Question) (entry *DNSEntry, rrType uint16, err error) {
 	err = ErrNotFound
-	for _, result := range fetchRelatedEntries(cfg, q) {
+	for _, result := range s.fetchRelatedEntries(q) {
 		data := <-result
 		entry, rrType, err = data.Entry, data.RType, data.Err
 		if err == nil {
@@ -279,12 +265,12 @@ func fetchBestEntry(cfg *Config, q *dns.Question) (entry *DNSEntry, rrType uint1
 // fetchRelatedEntries issues parallel queries to the DNS database for all
 // records possibly needed to answer the given question, and returns a slice of
 // channels from which to retrieve answers in prioritized order.
-func fetchRelatedEntries(cfg *Config, q *dns.Question) []chan dnsEntryResult {
+func (s *Service) fetchRelatedEntries(q *dns.Question) []chan dnsEntryResult {
 	// Issue the CNAME and RR queries simultaneously
 	entries := make([]chan dnsEntryResult, 0, 2)
-	entries = append(entries, fetchEntry(cfg, q, dns.TypeCNAME))
+	entries = append(entries, s.fetchEntry(q, dns.TypeCNAME))
 	if q.Qtype != dns.TypeCNAME {
-		entries = append(entries, fetchEntry(cfg, q, q.Qtype))
+		entries = append(entries, s.fetchEntry(q, q.Qtype))
 	}
 	if q.Qtype != dns.TypeDNAME {
 		// TODO: Check for DNAME entries for the given name and for each parent for
@@ -294,10 +280,10 @@ func fetchRelatedEntries(cfg *Config, q *dns.Question) []chan dnsEntryResult {
 	return entries
 }
 
-func fetchEntry(cfg *Config, q *dns.Question, rrType uint16) chan dnsEntryResult {
+func (s *Service) fetchEntry(q *dns.Question, rrType uint16) chan dnsEntryResult {
 	out := make(chan dnsEntryResult)
 	go func() {
-		entry, err := cfg.db.GetDNS(q.Name, dns.Type(rrType).String())
+		entry, err := s.p.RR(q.Name, dns.Type(rrType).String())
 		out <- dnsEntryResult{
 			Entry: entry,
 			RType: rrType,
@@ -305,6 +291,37 @@ func fetchEntry(cfg *Config, q *dns.Question, rrType uint16) chan dnsEntryResult
 		}
 	}()
 	return out
+}
+
+// haveAuthority returns true if we are an authority for the zone containing
+// the given key
+func (s *Service) haveAuthority(q *dns.Question) bool {
+	nameParts := strings.Split(strings.TrimSuffix(q.Name, "."), ".") // breakup the queryed name
+	// Check for authority at each level (but ignore the TLD)
+	for i := 0; i < len(nameParts)-1; i++ {
+		name := strings.Join(nameParts[i:], ".")
+		// Test for an SOA (which tells us we have authority)
+		found, err := s.p.HasRR(name, "SOA")
+		if err == nil && found {
+			return true
+		}
+		// Test for a DNAME which has special handling for aliasing of subdomains within
+		found, err = s.p.HasRR(name, "DNAME")
+		if err == nil && found {
+			// FIXME!  THIS NEEDS TO HANDLE DNAME ALIASING CORRECTLY INSTEAD OF IGNORING IT...
+			log.Printf("DNAME EXISTS!  WE NEED TO HANDLE THIS CORRECTLY... FIXME\n")
+			return true
+		}
+	}
+	return false
+}
+
+// msElapsed returns the number of milliseconds that have elapsed between now
+// and start as a float64
+func msElapsed(start, now time.Time) float64 {
+	elapsed := now.Sub(start)
+	seconds := elapsed.Seconds()
+	return seconds * 1000
 }
 
 func prepareAnswerMsg(req *dns.Msg, answers []dns.RR) *dns.Msg {
@@ -339,6 +356,8 @@ func getWOLHostname(q *dns.Question) string {
 	return wolMatcher.ReplaceAllString(q.Name, "")
 }
 
+// FIXME: Restore WOL functionality
+/*
 func processWOL(cfg *Config, q *dns.Question) dns.RR {
 	hostname := getWOLHostname(q)
 	log.Printf("WoL requested for %s", hostname)
@@ -354,6 +373,7 @@ func processWOL(cfg *Config, q *dns.Question) dns.RR {
 	answer.Txt = []string{status}
 	return answer
 }
+*/
 
 func answerSOA(q *dns.Question, e *DNSEntry) dns.RR {
 	answer := new(dns.SOA)
@@ -492,29 +512,6 @@ func answerSRV(q *dns.Question, v *DNSValue) dns.RR {
 		}
 	}
 	return answer
-}
-
-// haveAuthority returns true if we are an authority for the zone containing
-// the given key
-func haveAuthority(cfg *Config, q *dns.Question) bool {
-	nameParts := strings.Split(strings.TrimSuffix(q.Name, "."), ".") // breakup the queryed name
-	// Check for authority at each level (but ignore the TLD)
-	for i := 0; i < len(nameParts)-1; i++ {
-		name := strings.Join(nameParts[i:], ".")
-		// Test for an SOA (which tells us we have authority)
-		found, err := cfg.db.HasDNS(name, "SOA")
-		if err == nil && found {
-			return true
-		}
-		// Test for a DNAME which has special handling for aliasing of subdomains within
-		found, err = cfg.db.HasDNS(name, "DNAME")
-		if err == nil && found {
-			// FIXME!  THIS NEEDS TO HANDLE DNAME ALIASING CORRECTLY INSTEAD OF IGNORING IT...
-			log.Printf("DNAME EXISTS!  WE NEED TO HANDLE THIS CORRECTLY... FIXME\n")
-			return true
-		}
-	}
-	return false
 }
 
 func forwardQuestion(q *dns.Question, forwarders []string) []dns.RR {

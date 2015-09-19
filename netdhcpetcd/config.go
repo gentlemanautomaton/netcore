@@ -1,4 +1,4 @@
-package main
+package netetcd
 
 import (
 	"fmt"
@@ -12,13 +12,17 @@ import (
 	"github.com/coreos/go-etcd/etcd"
 )
 
-func (db EtcdDB) GetConfig() (*Config, error) {
+func (p *Provider) Init() {
+	db.client.CreateDir("dhcp", 0)
+}
+
+func (p *Provider) Config() (*Config, error) {
 	fmt.Println("Getting CONFIG")
 
-	etc := db.client
+	etc := p.client
 
 	fmt.Println("precreate")
-	etc.CreateDir("config", 0)
+	etc.CreateDir("config", 0) // Is this even appropriate? Should the CLI be responsible for initialization calls?
 	fmt.Println("postcreate")
 
 	cfg := &Config{
