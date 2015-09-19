@@ -1,6 +1,7 @@
 package netetcd
 
 import (
+	"dustywilson/netcore/netdhcp"
 	"fmt"
 	"net"
 	"os"
@@ -12,11 +13,14 @@ import (
 	"github.com/coreos/go-etcd/etcd"
 )
 
-func (p *Provider) Init() {
-	db.client.CreateDir("dhcp", 0)
+// Init creates the initial etcd structure for DNS data.
+func (p *Provider) Init() error {
+	p.client.CreateDir("dhcp", 0)
+	return nil
 }
 
-func (p *Provider) Config() (*Config, error) {
+// Config returns a point-in-time view of the configuration for the instance.
+func (p *Provider) Config(instance string) (*Config, error) {
 	fmt.Println("Getting CONFIG")
 
 	etc := p.client
@@ -25,7 +29,7 @@ func (p *Provider) Config() (*Config, error) {
 	etc.CreateDir("config", 0) // Is this even appropriate? Should the CLI be responsible for initialization calls?
 	fmt.Println("postcreate")
 
-	cfg := &Config{
+	cfg := &netdhcp.Cfg{
 		db: db,
 	}
 
@@ -47,7 +51,7 @@ func (p *Provider) Config() (*Config, error) {
 				return nil, err
 			}
 		}
-		cfg.hostname = hostname
+		cfg.Hostname = hostname
 	}
 
 	// Zone

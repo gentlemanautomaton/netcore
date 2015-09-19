@@ -23,7 +23,7 @@ func (p *Provider) Init() {
 	p.client.CreateDir("dns", 0)
 }
 
-// Config returns a point-in-time view of the composite configuration for the
-func (p *Provider) Config(server string) {
+// Config returns a point-in-time view of the configuration for the instance.
+func (p *Provider) Config(instance string) {
 	return p.d
 }

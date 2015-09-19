@@ -3,10 +3,10 @@ package netdns
 import "time"
 
 const (
-	ncDefaultTTL             = time.Hour * 3
-	ncMinimumTTL             = time.Second * 60
-	ncCacheRetention         = 0
-	ncCacheRetentionNotFound = time.Second * 30
+	ncDefaultTTL     = time.Hour * 3
+	ncMinimumTTL     = time.Second * 60
+	ncCacheRetention = 0
+	//ncCacheRetentionNotFound = time.Second * 30
 )
 
 // Config provides all of the necessary configuration context for the operation
@@ -20,45 +20,59 @@ type Config interface {
 }
 
 // NewConfig creates an immutable instance of the Config interface.
-func NewConfig(defaultTTL, minimumTTL, cacheRetention, cacheRetentionNotFound time.Duration, forwarders []string) Config {
-	return &config{
-		defaultTTL:     defaultTTL,
-		minimumTTL:     minimumTTL,
-		cacheRetention: cacheRetention,
-		//cacheRetentionNotFound: cacheRetentionNotFound,
-		forwarders: append([]string(nil), forwarders...), // Copy to avoid mutability
-	}
+func NewConfig(c Cfg) Config {
+	return &config{c.Copy()}
 }
 
 // DefaultConfig returns a Config interface with the default values for netcore.
 func DefaultConfig() Config {
-	return NewConfig(ncDefaultTTL, ncMinimumTTL, ncCacheRetention, ncCacheRetentionNotFound, nil)
+	return config{Cfg{
+		DefaultTTL:     ncDefaultTTL,
+		MinimumTTL:     ncMinimumTTL,
+		CacheRetention: ncCacheRetention,
+	}}
+}
+
+// Cfg provides a mutable implementation of the Config interface. It can be made
+// into an immutable Config instance via the NewConfig function.
+type Cfg struct {
+	DefaultTTL     time.Duration
+	MinimumTTL     time.Duration
+	CacheRetention time.Duration
+	//cacheRetentionNotFound time.Duration
+	Forwarders []string
+}
+
+// Copy will make a deep copy of the Cfg.
+func (c Cfg) Copy() Cfg {
+	return Cfg{
+		DefaultTTL:     c.DefaultTTL,
+		MinimumTTL:     c.MinimumTTL,
+		CacheRetention: c.CacheRetention,
+		Forwarders:     append([]string(nil), c.Forwarders...), // Copy to avoid mutability
+	}
 }
 
 // config provides an immutable implementation of the Config interface.
 type config struct {
-	defaultTTL     time.Duration
-	minimumTTL     time.Duration
-	cacheRetention time.Duration
-	//cacheRetentionNotFound time.Duration
-	forwarders []string
+	x Cfg
 }
 
 // DefaultTTL is the default TTL for all positive answers.
 func (c config) DefaultTTL() time.Duration {
-	return c.defaultTTL
+	return c.x.DefaultTTL
 }
 
 // MinimumTTL is the default value for the MINIMUM field in SOA records
 // indicating how long to cache negative answers.
 func (c config) MinimumTTL() time.Duration {
-	return c.minimumTTL
+	return c.x.MinimumTTL
 }
 
 // CacheRetention is the duration for which resource records are retained in the
 // DNS cache.
 func (c config) CacheRetention() time.Duration {
-	return c.cacheRetention
+	return c.x.CacheRetention
 }
 
 // CacheRetentionNotFound is the duration for which records that aren't found
@@ -66,7 +80,7 @@ func (c config) CacheRetention() time.Duration {
 // smaller.
 /*
 func (c config) CacheRetentionNotFound() time.Duration {
-	return c.cacheRetentionNotFound
+	return c.x.cacheRetentionNotFound
 }
 */
 
@@ -76,7 +90,7 @@ func (c config) CacheRetentionNotFound() time.Duration {
 // DNS queries. Forwarders are necessary to resolve CNAME and DNAME queries
 // for which this server is not authoritative.
 func (c config) Forwarders() []string {
-	return append([]string(nil), c.forwarders...) // Copy to avoid mutability
+	return append([]string(nil), c.x.Forwarders...) // Copy to avoid mutability
 }
 
 /*

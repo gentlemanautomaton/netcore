@@ -2,6 +2,7 @@ package netdns
 
 import (
 	"crypto/sha1"
+	"dustywilson/netcore/netdns"
 	"fmt"
 	"log"
 	"net"
@@ -12,7 +13,7 @@ import (
 )
 
 // RR returns the resource record for the given name and type.
-func (p *Provider) RR(name string, rrType string) (*DNSEntry, error) {
+func (p *Provider) RR(name string, rrType string) (*netdns.DNSEntry, error) {
 	//log.Printf("[Lookup [%s] [%s]]\n", q.Name, qType)
 	rrType = strings.ToLower(rrType)
 	key := etcdDNSKeyFromFQDN(name) + "/@" + rrType // structure the lookup key

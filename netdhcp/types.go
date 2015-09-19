@@ -1,8 +1,14 @@
 package netdhcp
 
 import (
+	"errors"
 	"net"
 	"time"
+)
+
+var (
+	// ErrNotFound indicates that the requested data does not exist
+	ErrNotFound = errors.New("not found")
 )
 
 // IPEntry represents an IP address allocation retrieved from the underlying

@@ -2,7 +2,6 @@ package netdnsetcd
 
 import (
 	"dustywilson/netcore/netdns"
-	"strings"
 
 	"github.com/coreos/go-etcd/etcd"
 )
@@ -11,18 +10,15 @@ import (
 // the DNS service.
 type Provider struct {
 	client   *etcd.Client
-	defaults Config
+	defaults netdns.Config
 }
 
-// NewProvider creates a new etcd DNS provider with the given etcd client.
-func NewProvider(client etcd.Client, defaults netdns.Config) Provider {
-	client.SetConsistency("WEAK_CONSISTENCY")
-	return Provider{client}
-}
-
-func etcdKeyNotFound(err error) bool {
-	if err == nil {
-		return false
+// NewProvider creates a new etcd DNS provider with the given etcd client and
+// default values.
+func NewProvider(client etcd.Client, defaults netdns.Config) netdns.Provider {
+	client.SetConsistency("WEAK_CONSISTENCY") // FIXME: Is this the right place for this?
+	return &Provider{
+		client:   client,
+		defaults: defaults,
 	}
-	return strings.Contains(err.Error(), "Key not found")
 }

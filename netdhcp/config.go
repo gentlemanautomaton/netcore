@@ -28,19 +28,19 @@ type Config interface {
 
 // NewConfig creates an immutable instance of the Config interface from the
 // given mutable data.
-func NewConfig(c Cfg) Config {
-	return &config{c}
+func NewConfig(c *Cfg) Config {
+	return &config{c.Copy()}
 }
 
 // DefaultConfig returns a Config interface with the default values for netcore.
 func DefaultConfig() Config {
-	return NewConfig(Cfg{
+	return &config{Cfg{
 	// TODO: Create these!
-	})
+	}}
 }
 
-// Cfg defines a standard set of fields which can be turned into an
-// immutable Config instance via the NewConfig function.
+// Cfg provides a mutable implementation of the Config interface. It can be made
+// into an immutable Config instance via the NewConfig function.
 type Cfg struct {
 	Hostname      string
 	NIC           string
@@ -56,6 +56,25 @@ type Cfg struct {
 	Options       dhcp4.Options
 }
 
+// Copy will make a deep copy of the Cfg.
+func (c *Cfg) Copy() Cfg {
+	return Cfg{
+		Hostname:      c.Hostname,
+		NIC:           c.NIC,
+		IP:            c.IP,
+		Enabled:       c.Enabled,
+		Network:       c.Network,
+		Subnet:        c.Subnet,
+		Gateway:       c.Gateway,
+		Domain:        c.Domain,
+		TFTP:          c.TFTP,
+		LeaseDuration: c.LeaseDuration,
+		GuestPool:     c.GuestPool,
+		Options:       c.Options,
+	}
+}
+
+// config provides an immutable implementation of the Config interface.
 type config struct {
 	x Cfg
 }
@@ -140,6 +159,7 @@ if dhcpTFTP != "" {
 }
 */
 
+// Experimental:
 /*
 // Config provides all of the necessary configuration context for the operation
 // of a netcore DHCP instance.

@@ -1,23 +1,24 @@
 package netdhcpetcd
 
 import (
-	"strings"
+	"dustywilson/netcore/netdhcp"
 
 	"github.com/coreos/go-etcd/etcd"
 )
 
+// Provider implements all etcd storage interfaces necessary for operation of
+// the DHCP service.
 type Provider struct {
-	client *etcd.Client
+	client   *etcd.Client
+	defaults netdhcp.Config
 }
 
-func NewProvider(client etcd.Client) Provider {
-	client.SetConsistency("WEAK_CONSISTENCY")
-	return Provider{client}
-}
-
-func etcdKeyNotFound(err error) bool {
-	if err == nil {
-		return false
+// NewProvider creates a new etcd DNS provider with the given etcd client and
+// default values.
+func NewProvider(client etcd.Client, defaults netdhcp.Config) netdhcp.Provider {
+	client.SetConsistency("WEAK_CONSISTENCY") // FIXME: Is this the right place for this?
+	return &Provider{
+		client:   client,
+		defaults: defaults,
 	}
-	return strings.Contains(err.Error(), "Key not found")
 }
