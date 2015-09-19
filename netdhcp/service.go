@@ -15,29 +15,38 @@ type Service struct {
 	instance string
 	cfg      Config
 	p        Provider
-	done     chan error
+	done     chan Completion
 }
 
 // NewService creates a new netcore DHCP service.
-func NewService(p Provider) *Service {
+func NewService(p Provider, instance string) *Service {
 	s := &Service{
-		p:    p,
-		done: make(chan error, 1),
+		instance: instance,
+		p:        p,
+		done:     make(chan Completion, 1),
 	}
 
-	go func() {
-		if err := s.init(); err != nil {
-			s.done <- err
-			return
-		}
-		s.done <- dhcp4.ListenAndServeIf(s.cfg.NIC(), s)
-	}()
+	go s.init()
 
 	return s
 }
 
-func (s *Service) init() error {
-	// FIXME: Don't do this Init(), but instead handle initial setup via the CLI
+func (s *Service) init() {
+	if err := s.loadConfig(); err != nil {
+		s.exit(false, err)
+		return
+	}
+	err := dhcp4.ListenAndServeIf(s.cfg.NIC(), s)
+	s.exit(true, err)
+}
+
+func (s *Service) exit(initialized bool, err error) {
+	s.done <- Completion{false, err}
+	close(s.done)
+}
+
+func (s *Service) loadConfig() error {
+	// FIXME: Don't make this Init() call, but instead handle initial setup via the CLI
 	if err := s.p.Init(); err != nil {
 		return err
 	}
@@ -45,9 +54,16 @@ func (s *Service) init() error {
 	if err != nil {
 		return err
 	}
+	if err := Validate(cfg); err != nil {
+		return err
+	}
 	s.cfg = cfg
-	s.done <- dhcp4.ListenAndServeIf(s.cfg.NIC(), s)
 	return nil
+}
+
+// Done returns a channel that will be signaled when the service exits.
+func (s *Service) Done() chan Completion {
+	return s.done
 }
 
 // ServeDHCP is called by dhcp4.ListenAndServe when the service is started

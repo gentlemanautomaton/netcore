@@ -1,4 +1,4 @@
-package netdns
+package netdnsetcd
 
 import (
 	"crypto/sha1"
@@ -30,7 +30,7 @@ func (p *Provider) RR(name string, rrType string) (*netdns.DNSEntry, error) {
 		return etcdNodeToDNSEntry(response.Node), nil
 	}
 
-	return nil, ErrNotFound
+	return nil, netdns.ErrNotFound
 }
 
 // HasRR returns true if a resource record exists with the given name and type.
@@ -89,13 +89,13 @@ func (p *Provider) RegisterA(fqdn string, ip net.IP, exclusive bool, ttl uint32,
 	return err
 }
 
-func etcdNodeToDNSEntry(root *etcd.Node) *DNSEntry {
-	entry := &DNSEntry{}
+func etcdNodeToDNSEntry(root *etcd.Node) *netdns.DNSEntry {
+	entry := &netdns.DNSEntry{}
 	for _, node := range root.Nodes {
 		key := strings.Replace(node.Key, root.Key+"/", "", 1)
 		if node.Dir {
 			if key == "val" {
-				entry.Values = make([]DNSValue, len(node.Nodes))
+				entry.Values = make([]netdns.DNSValue, len(node.Nodes))
 				for i, child := range node.Nodes {
 					etcdNodeToDNSValue(child, &entry.Values[i])
 				}
@@ -118,7 +118,7 @@ func etcdNodeToDNSEntry(root *etcd.Node) *DNSEntry {
 	return entry
 }
 
-func etcdNodeToDNSValue(node *etcd.Node, value *DNSValue) {
+func etcdNodeToDNSValue(node *etcd.Node, value *netdns.DNSValue) {
 	value.Expiration = node.Expiration
 
 	if node.TTL > 0 {

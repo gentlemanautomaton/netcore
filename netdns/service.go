@@ -18,7 +18,7 @@ type Service struct {
 	cfg      Config
 	p        Provider
 	cache    *dnscache.Cache
-	done     chan error
+	done     chan Completion
 }
 
 // NewService creates a new netcore DNS service.
@@ -26,40 +26,66 @@ func NewService(p Provider, instance string) *Service {
 	s := &Service{
 		instance: instance,
 		p:        p,
-		done:     make(chan error, 1),
+		done:     make(chan Completion, 1),
 	}
 
-	go func() {
-		if err := s.init(); err != nil {
-			s.done <- err
-			return
-		}
-		go func() {
-			s.done <- dns.ListenAndServe("0.0.0.0:53", "tcp", nil) // TODO: should use cfg to define the listening ip/port
-		}()
-
-		go func() {
-			s.done <- dns.ListenAndServe("0.0.0.0:53", "udp", nil) // TODO: should use cfg to define the listening ip/port
-		}()
-	}()
+	go s.init()
 
 	return s
 }
 
-func (s *Service) init() error {
-	cfg, err := s.p.Config(s.instance)
-	if err != nil {
-		return err
+func (s *Service) init() {
+	if err := s.loadConfig(); err != nil {
+		s.exit(false, err)
+		return
 	}
-	s.cfg = cfg
 
 	cacheRetentionNotFound := time.Second * 30 // FIXME: Get rid of this once dnscache is updated to follow spec
-	s.cache = dnscache.New(dnsCacheBufferSize, cfg.CacheRetention(), cacheRetentionNotFound, func(c dnscache.Context, q dns.Question) []dns.RR {
+	s.cache = dnscache.New(dnsCacheBufferSize, s.cfg.CacheRetention(), cacheRetentionNotFound, func(c dnscache.Context, q dns.Question) []dns.RR {
 		return s.answerQuestion(c, &q, 0)
 	})
 
 	dns.HandleFunc(".", func(w dns.ResponseWriter, req *dns.Msg) { s.dnsQueryServe(w, req) })
-	return s.p.Init() // FIXME: Don't do this, but instead handle initial setup via the CLI
+
+	go func() {
+		err := dns.ListenAndServe("0.0.0.0:53", "tcp", nil) // TODO: should use cfg to define the listening ip/port
+		s.exit(true, err)
+	}()
+
+	go func() {
+		err := dns.ListenAndServe("0.0.0.0:53", "udp", nil) // TODO: should use cfg to define the listening ip/port
+		s.exit(true, err)
+	}()
+}
+
+func (s *Service) exit(initialized bool, err error) {
+	// FIXME: netdns spawns two service listeners, which means this can get called
+	//        twice, but the done channel is closed after the first call. This
+	//        could be fixed with a waitgroup if we only close the channel after
+	//        all members of the waitgroup have signaled.
+	s.done <- Completion{false, err}
+	close(s.done)
+}
+
+func (s *Service) loadConfig() error {
+	// FIXME: Don't make this Init() call, but instead handle initial setup via the CLI
+	if err := s.p.Init(); err != nil {
+		return err
+	}
+	cfg, err := s.p.Config(s.instance)
+	if err != nil {
+		return err
+	}
+	if err := Validate(cfg); err != nil {
+		return err
+	}
+	s.cfg = cfg
+	return nil
+}
+
+// Done returns a channel that will be signaled when the service exits.
+func (s *Service) Done() chan Completion {
+	return s.done
 }
 
 func (s *Service) dnsQueryServe(w dns.ResponseWriter, req *dns.Msg) {

@@ -4,6 +4,11 @@ import (
 	"flag"
 	"log"
 	"os"
+
+	"dustywilson/netcore/netdhcp"
+	"dustywilson/netcore/netdhcpetcd"
+	"dustywilson/netcore/netdns"
+	"dustywilson/netcore/netdnsetcd"
 )
 
 func init() {
@@ -11,40 +16,44 @@ func init() {
 }
 
 func main() {
-	log.Println("INIT PRECONFIG")
-	etcdclient := etcdClient()
-	dhcpProvider := netdhcpetcd.NewProvider(etcdclient)
-	dhcpConfig := dhcpProvider.Config()
-	dnsProvider := netdnsetcd.NewProvider(etcdclient)
-	cfg, err := db.GetConfig()
-	log.Println("INIT POSTCONFIG")
+	log.Println("NETCORE INITIALIZING")
 
+	inst, err := instance()
 	if err != nil {
-		log.Printf("Configuration failed: %s\n", err)
+		log.Printf("FAILURE: Unable to determine instance: %s\n", err)
 		os.Exit(1)
 	}
 
-	var dhcpExit chan error
-	if cfg.DHCPIP() == nil {
-		log.Println("DHCP service is disabled; this machine does not have a DHCP IP assigned.")
-	} else if cfg.DHCPSubnet() == nil {
-		log.Println("DHCP service is disabled; this machine's zone does not have a DHCP subnet assigned.")
-	} else if cfg.DHCPNIC() == "" {
-		log.Println("DHCP service is disabled; this machine does not have a DHCP NIC assigned.")
-	} else {
-		dhcpExit = dhcpSetup(cfg)
+	etcdclient, err := etcdClient()
+	if err != nil {
+		log.Printf("FAILURE: Unable to create etcd client: %s\n", err)
+		os.Exit(1)
 	}
 
-	dnsExit := dnsSetup(cfg)
+	dhcpService := netdhcp.NewService(netdhcpetcd.NewProvider(etcdclient, netdhcp.DefaultConfig()), instance)
+	dnsService := netdns.NewService(netdnsetcd.NewProvider(etcdclient, netdns.DefaultConfig()), instance)
 
-	log.Println("NETCORE Started.")
+	// TODO: Print NETCORE [SERVICE] STARTED for each service when they become
+	//       ready.
+	log.Println("NETCORE STARTED")
 
+	// TODO: Make sure this exits properly if neither service is enabled.
 	select {
-	case err := <-dhcpExit:
-		log.Printf("DHCP Exited: %s\n", err)
-		os.Exit(1)
-	case err := <-dnsExit:
-		log.Printf("DNS Exited: %s\n", err)
-		os.Exit(1)
+	case d, ok := <-dhcpService.Done():
+		if ok {
+			if d.Initialized {
+				log.Printf("NETCORE DHCP EXITED: %s\n", d.Err)
+				os.Exit(1)
+			}
+			log.Printf("NETCORE DHCP NOT STARTED: %s\n", d.Err)
+		}
+	case d, ok := <-dnsService.Done():
+		if ok {
+			if d.Initialized {
+				log.Printf("NETCORE DHCP EXITED: %s\n", d.Err)
+				os.Exit(1)
+			}
+			log.Printf("NETCORE DNS NOT STARTED: %s\n", d.Err)
+		}
 	}
 }

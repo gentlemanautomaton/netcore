@@ -12,7 +12,7 @@ const minimumLeaseDuration = 60 * time.Second // FIXME: put this in a config
 // Config provides all of the necessary configuration context for the operation
 // of a netcore DNS instance.
 type Config interface {
-	Hostname() string
+	Instance() string
 	NIC() string
 	IP() net.IP
 	Enabled() bool
@@ -42,7 +42,7 @@ func DefaultConfig() Config {
 // Cfg provides a mutable implementation of the Config interface. It can be made
 // into an immutable Config instance via the NewConfig function.
 type Cfg struct {
-	Hostname      string
+	Instance      string
 	NIC           string
 	IP            net.IP
 	Enabled       bool
@@ -59,7 +59,7 @@ type Cfg struct {
 // Copy will make a deep copy of the Cfg.
 func (c *Cfg) Copy() Cfg {
 	return Cfg{
-		Hostname:      c.Hostname,
+		Instance:      c.Instance,
 		NIC:           c.NIC,
 		IP:            c.IP,
 		Enabled:       c.Enabled,
@@ -74,13 +74,30 @@ func (c *Cfg) Copy() Cfg {
 	}
 }
 
+// Validate returns an error if the config is invalid, otherwise it returns nil.
+func Validate(c Config) error {
+	if c == nil {
+		return ErrNoConfig
+	}
+	if c.IP() == nil {
+		return ErrNoConfigIP
+	}
+	if c.Subnet() == nil {
+		return ErrNoConfigSubnet
+	}
+	if c.NIC() == "" {
+		return ErrNoConfigNIC
+	}
+	return nil
+}
+
 // config provides an immutable implementation of the Config interface.
 type config struct {
 	x Cfg
 }
 
-func (c config) Hostname() string {
-	return c.x.Hostname
+func (c config) Instance() string {
+	return c.x.Instance
 }
 
 func (c config) NIC() string {

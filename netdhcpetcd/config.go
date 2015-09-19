@@ -1,4 +1,4 @@
-package netetcd
+package netdhcpetcd
 
 import (
 	"dustywilson/netcore/netdhcp"
@@ -20,7 +20,7 @@ func (p *Provider) Init() error {
 }
 
 // Config returns a point-in-time view of the configuration for the instance.
-func (p *Provider) Config(instance string) (*Config, error) {
+func (p *Provider) Config(instance string) (netdhcp.Config, error) {
 	fmt.Println("Getting CONFIG")
 
 	etc := p.client
@@ -30,7 +30,7 @@ func (p *Provider) Config(instance string) (*Config, error) {
 	fmt.Println("postcreate")
 
 	cfg := &netdhcp.Cfg{
-		db: db,
+		Instance: instance,
 	}
 
 	// Hostname

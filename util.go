@@ -1,11 +1,27 @@
 package main
 
 import (
+	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 
 	"code.google.com/p/go-uuid/uuid"
 )
+
+func instance() (string, error) {
+	if len(os.Getenv("NETCORE_NAME")) > 0 {
+		return os.Getenv("NETCORE_NAME"), nil
+	}
+	if len(os.Getenv("ETCD_NAME")) > 0 {
+		re := regexp.MustCompile(`^/([^/]+)/`)
+		hostnameParts := re.FindStringSubmatch(os.Getenv("ETCD_NAME"))
+		if len(hostnameParts) > 1 && len(hostnameParts[1]) > 0 {
+			return hostnameParts[1], nil
+		}
+	}
+	return getHostname()
+}
 
 func getHostname() (string, error) {
 	fqdn, err := exec.Command("hostname", "-f").Output()
@@ -13,14 +29,6 @@ func getHostname() (string, error) {
 		return "", err
 	}
 	return strings.TrimSpace(string(fqdn)), nil
-}
-
-func reverseSlice(in []string) []string {
-	out := make([]string, len(in))
-	for i := range in {
-		out[len(in)-i-1] = in[i]
-	}
-	return out
 }
 
 func getUUID() string {

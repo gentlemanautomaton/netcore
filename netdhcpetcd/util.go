@@ -14,5 +14,5 @@ func etcdKeyNotFound(err error) bool {
 
 // IP returns an IPEntry for the given IP address if it exists, otherwise it
 // returns netdhcp.ErrNotFound
-func (p *Provider) ip(key) (net.IP, error) {
+func (p *Provider) ip(key string) (net.IP, error) {
 }

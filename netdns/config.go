@@ -53,6 +53,14 @@ func (c Cfg) Copy() Cfg {
 	}
 }
 
+// Validate returns an error if the config is invalid, otherwise it returns nil.
+func Validate(c Config) error {
+	if c == nil {
+		return ErrNoConfig
+	}
+	return nil
+}
+
 // config provides an immutable implementation of the Config interface.
 type config struct {
 	x Cfg
