@@ -86,10 +86,13 @@ func (p *Provider) MAC(mac net.HardwareAddr, cascade bool) (*netdhcp.MACEntry, b
 // RenewLease will attempt to update the duration of the given lease.
 func (p *Provider) RenewLease(lease *netdhcp.MACEntry) error {
 	// FIXME: Validate lease
-	duration := uint64(lease.Duration.Seconds() + 0.5) // Half second jitter to hide network delay
+	duration := lease.Duration + (time.Second / 2) // Half second jitter to hide network delay
 	keys := client.NewKeysAPI(p.c)
-	// FIXME: Figure out the new etcd equivalent of CompareAndSwap
-	_, err := keys.CompareAndSwap("dhcp/"+lease.IP.String(), lease.MAC.String(), duration, lease.MAC.String(), 0)
+	// FIXME: Verify that this conversion to the new etcd client API is right
+	_, err := keys.Set(context.Background(), "dhcp/"+lease.IP.String(), lease.MAC.String(), &client.SetOptions{
+		PrevValue: lease.MAC.String(),
+		TTL:       duration,
+	})
 	if err == nil {
 		return p.WriteLease(lease)
 	}
@@ -100,8 +103,10 @@ func (p *Provider) RenewLease(lease *netdhcp.MACEntry) error {
 func (p *Provider) CreateLease(lease *netdhcp.MACEntry) error {
 	// FIXME: Validate lease
 	keys := client.NewKeysAPI(p.c)
-	options := &client.SetOptions{TTL: lease.Duration}
-	_, err := keys.Set(context.Background(), IPKey(lease.IP), lease.MAC.String(), options)
+	network := nil // FIXME: Where do I get the network name?
+	_, err := keys.Set(context.Background(), IPKey(network, lease.IP), lease.MAC.String(), &client.SetOptions{
+		TTL: lease.Duration,
+	})
 	if err == nil {
 		return p.WriteLease(lease)
 	}
@@ -130,7 +135,7 @@ func etcdNodeToMACEntry(root *client.Node, entry *netdhcp.MACEntry) {
 		switch key {
 		case "ip":
 			entry.IP = net.ParseIP(node.Value)
-			entry.Duration = node.TTLDuration()
+			entry.Duration = time.Second * time.Duration(node.TTL) // FIXME: is this the best overall way to turn node.TTL into time.Duration?
 		default:
 			if entry.Attr == nil {
 				entry.Attr = make(map[string]string)
