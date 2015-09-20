@@ -139,7 +139,7 @@ func etcdNodeToMACEntry(root *client.Node, entry *netdhcp.MACEntry) {
 		switch key {
 		case "ip":
 			entry.IP = net.ParseIP(node.Value)
-			entry.Duration = time.Second * time.Duration(node.TTL) // FIXME: is this the best overall way to turn node.TTL into time.Duration?
+			entry.Duration = node.TTLDuration()
 		default:
 			if entry.Attr == nil {
 				entry.Attr = make(map[string]string)
