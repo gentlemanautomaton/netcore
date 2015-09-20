@@ -5,15 +5,18 @@ import (
 	"flag"
 	"os"
 	"strings"
+	"time"
 
-	"github.com/coreos/go-etcd/etcd"
+	"github.com/coreos/etcd/client"
 )
 
 var etcdServers = flag.String("etcd", "", "Comma-separated list of etcd servers.")
 
-var ErrNoEtcdServers = errors.New("No etcd server list provided")
+// ErrNoEtcdEndpoints indicates that netcore could not find a list of etcd
+// endpoints to connect to.
+var ErrNoEtcdEndpoints = errors.New("No etcd endpoints provided")
 
-func etcdClient() (*etcd.Client, error) {
+func etcdClient() (client.Client, error) {
 	if len(*etcdServers) == 0 {
 		if port := os.Getenv("ETCD_PORT"); len(port) > 0 {
 			*etcdServers = strings.Replace(port, "tcp://", "http://", 1)
@@ -21,10 +24,13 @@ func etcdClient() (*etcd.Client, error) {
 			*etcdServers = "etcd" // just some default hostname that Docker or otherwise might use
 		}
 	}
-	var servers []string
 	if *etcdServers != "" {
-		servers = strings.Split(*etcdServers, ",")
-		return etcd.NewClient(servers), nil
+		endpoints := strings.Split(*etcdServers, ",")
+		return client.New(client.Config{
+			Endpoints:               endpoints,
+			Transport:               client.DefaultTransport,
+			HeaderTimeoutPerRequest: time.Second,
+		}), nil
 	}
 	return nil, ErrNoEtcdServers
 }

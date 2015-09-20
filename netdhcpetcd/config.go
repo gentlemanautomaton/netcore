@@ -4,18 +4,22 @@ import (
 	"dustywilson/netcore/netdhcp"
 	"fmt"
 	"net"
-	"os"
-	"regexp"
-	"strconv"
-	"strings"
-	"time"
 
-	"github.com/coreos/go-etcd/etcd"
+	"golang.org/x/net/context"
+
+	"github.com/coreos/etcd/client"
 )
 
-// Init creates the initial etcd structure for DNS data.
+// Init creates the initial etcd buckets for DHCP data.
 func (p *Provider) Init() error {
-	p.client.CreateDir("dhcp", 0)
+	buckets := []string{RootBucket, ConfigBucket, ServerBucket, NetworkBucket, HostBucket, HardwareBucket}
+	keys := client.NewKeysAPI(p.c)
+	for _, b := range buckets {
+		_, err := keys.Set(context.Background(), b, "", &client.SetOptions{Dir: true})
+		if err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -23,235 +27,85 @@ func (p *Provider) Init() error {
 func (p *Provider) Config(instance string) (netdhcp.Config, error) {
 	fmt.Println("Getting CONFIG")
 
-	etc := p.client
+	keys := client.NewKeysAPI(p.c)
 
-	fmt.Println("precreate")
-	etc.CreateDir("config", 0) // Is this even appropriate? Should the CLI be responsible for initialization calls?
-	fmt.Println("postcreate")
+	cfg := netdhcp.NewCfg(p.defaults)
+	cfg.Instance = instance
+	cfg.Enabled = true // Can be overridden at any level
 
-	cfg := &netdhcp.Cfg{
-		Instance: instance,
+	_, configNodes, ok, err := responseNodes(keys.Get(context.Background(), ConfigBucket, &client.GetOptions{Recursive: true}))
+	if err != nil && !etcdKeyNotFound(err) {
+		return nil, err
+	}
+	if ok {
+		nodesToConfig(configNodes, &cfg)
 	}
 
-	// Hostname
-	{
-		var hostname string
-		if len(os.Getenv("NETCORE_NAME")) > 0 {
-			hostname = os.Getenv("NETCORE_NAME")
-		} else if len(os.Getenv("ETCD_NAME")) > 0 {
-			re := regexp.MustCompile(`^/([^/]+)/`)
-			hostnameParts := re.FindStringSubmatch(os.Getenv("ETCD_NAME"))
-			if len(hostnameParts) > 1 && len(hostnameParts[1]) > 0 {
-				hostname = hostnameParts[1]
+	_, server, ok, err := responseNodes(keys.Get(context.Background(), ServerKey(instance), &client.GetOptions{Recursive: true}))
+	if err != nil && !etcdKeyNotFound(err) {
+		// FIXME: Return nil config when server isn't defined
+		return nil, err
+	}
+	if ok {
+		nodesToConfig(configNodes, &cfg)
+	}
+
+	if cfg.Network != "" {
+		_, server, ok, err := responseNodes(keys.Get(context.Background(), NetworkKey(cfg.Network), &client.GetOptions{Recursive: true}))
+		if err != nil && !etcdKeyNotFound(err) {
+			// FIXME: Return nil config when server isn't defined
+			return nil, err
+		}
+		if ok {
+			nodesToConfig(configNodes, &cfg)
+		}
+	}
+
+	fmt.Printf("DHCP ETCD CONFIG: [%+v]\n", &cfg)
+
+	return netdhcp.NewConfig(&cfg), nil
+}
+
+func nodesToConfig(nodes client.Nodes, cfg *netdhcp.Cfg) error {
+	for _, n := range nodes {
+		switch nodeKey(n) {
+		case NICField:
+			cfg.NIC = n.Value
+		case IPField:
+			cfg.IP = net.ParseIP(n.Value).To4()
+		case EnabledField:
+			if n.Value != "1" {
+				cfg.Enabled = false
 			}
-		} else {
-			var err error
-			hostname, err = getHostname()
+		case NetworkField:
+			cfg.Network = n.Value
+		case SubnetField:
+			_, value, err := net.ParseCIDR(n.Value)
 			if err != nil {
-				return nil, err
+				return err
 			}
-		}
-		cfg.Hostname = hostname
-	}
-
-	// Zone
-	{
-		var response *etcd.Response
-		var err error
-		if setZone != nil && *setZone != "" {
-			response, err = etc.Set("config/"+cfg.hostname+"/zone", *setZone, 0)
-		} else {
-			response, err = etc.Get("config/"+cfg.hostname+"/zone", false, false)
-		}
-		if err != nil {
-			return nil, err
-		}
-		if response == nil || response.Node == nil || response.Node.Value == "" {
-			return nil, ErrNoZone
-		}
-		cfg.zone = response.Node.Value
-	}
-
-	// Domain
-	{
-		response, err := etc.Get("config/"+cfg.zone+"/domain", false, false)
-		if err != nil && !etcdKeyNotFound(err) {
-			return nil, err
-		}
-		if response != nil && response.Node != nil && response.Node.Value != "" {
-			cfg.domain = response.Node.Value
-		}
-	}
-
-	// Subnet
-	{
-		response, err := etc.Get("config/"+cfg.zone+"/subnet", false, false)
-		if err != nil {
-			return nil, err
-		}
-		if response == nil || response.Node == nil || response.Node.Value == "" {
-			return nil, ErrNoZone
-		}
-		_, subnet, err := net.ParseCIDR(response.Node.Value)
-		if err != nil {
-			return nil, err
-		}
-		cfg.subnet = subnet
-	}
-
-	// Gateway
-	{
-		response, err := etc.Get("config/"+cfg.zone+"/gateway", false, false)
-		if err != nil {
-			return nil, err
-		}
-		if response == nil || response.Node == nil || response.Node.Value == "" {
-			return nil, ErrNoGateway
-		}
-		gateway := net.ParseIP(response.Node.Value).To4()
-		cfg.gateway = gateway
-	}
-
-	// DHCPIP
-	{
-		var response *etcd.Response
-		var err error
-		if setDHCPIP != nil && *setDHCPIP != "" {
-			response, err = etc.Set("config/"+cfg.hostname+"/dhcpip", *setDHCPIP, 0)
-		} else {
-			response, err = etc.Get("config/"+cfg.hostname+"/dhcpip", false, false)
-		}
-		if err != nil && !etcdKeyNotFound(err) {
-			return nil, err
-		}
-		if response != nil && response.Node != nil && response.Node.Value != "" {
-			dhcpIP := net.ParseIP(response.Node.Value).To4()
-			cfg.dhcpIP = dhcpIP
-		}
-	}
-
-	// DHCPNIC
-	{
-		var response *etcd.Response
-		var err error
-		if setDHCPNIC != nil && *setDHCPNIC != "" {
-			response, err = etc.Set("config/"+cfg.hostname+"/dhcpnic", *setDHCPNIC, 0)
-		} else {
-			response, err = etc.Get("config/"+cfg.hostname+"/dhcpnic", false, false)
-		}
-		if err != nil && !etcdKeyNotFound(err) {
-			return nil, err
-		}
-		if response != nil && response.Node != nil && response.Node.Value != "" {
-			cfg.dhcpNIC = response.Node.Value
-		}
-	}
-
-	// DHCPSubnet
-	{
-		var response *etcd.Response
-		var err error
-		if setZone != nil && *setZone != "" && setDHCPSubnet != nil && *setDHCPSubnet != "" {
-			response, err = etc.Set("config/"+cfg.zone+"/dhcpsubnet", *setDHCPSubnet, 0)
-		} else {
-			response, err = etc.Get("config/"+cfg.zone+"/dhcpsubnet", false, false)
-		}
-		if err != nil && !etcdKeyNotFound(err) {
-			return nil, err
-		}
-		if response != nil && response.Node != nil && response.Node.Value != "" {
-			_, dhcpSubnet, err := net.ParseCIDR(response.Node.Value)
+			cfg.Subnet = value
+		case GatewayField:
+			cfg.Gateway = net.ParseIP(n.Value).To4()
+		case DomainField:
+			cfg.Domain = n.Value
+		case TFTPField:
+			cfg.TFTP = n.Value
+		case NTPField:
+			cfg.NTP = net.ParseIP(n.Value).To4()
+		case LeaseDurationField:
+			value, err := Atod(n.Value)
 			if err != nil {
-				return nil, err
+				return err
 			}
-			cfg.dhcpSubnet = dhcpSubnet
-		}
-	}
-
-	// DHCPLeaseDuration
-	{
-		cfg.dhcpLeaseDuration = 12 * time.Hour // default setting is 12 hours
-		var response *etcd.Response
-		var err error
-		if setZone != nil && *setZone != "" && setDHCPLeaseDuration != nil && *setDHCPLeaseDuration != "" {
-			response, err = etc.Set("config/"+cfg.zone+"/dhcpleaseduration", *setDHCPLeaseDuration, 0)
-		} else {
-			response, err = etc.Get("config/"+cfg.zone+"/dhcpleaseduration", false, false)
-		}
-		if err != nil && !etcdKeyNotFound(err) {
-			return nil, err
-		}
-		if response != nil && response.Node != nil && response.Node.Value != "" {
-			value, err := strconv.Atoi(response.Node.Value)
+			cfg.LeaseDuration = value
+		case GuestPoolField:
+			_, value, err := net.ParseCIDR(n.Value)
 			if err != nil {
-				return nil, err
+				return err
 			}
-			cfg.dhcpLeaseDuration = time.Duration(value) * time.Minute
+			cfg.GuestPool = value
 		}
 	}
-
-	// DHCPTFTP
-	{
-		var response *etcd.Response
-		var err error
-		if setDHCPTFTP != nil && *setDHCPTFTP != "" {
-			response, err = etc.Set("config/"+cfg.hostname+"/dhcptftp", *setDHCPTFTP, 0)
-		} else {
-			response, err = etc.Get("config/"+cfg.hostname+"/dhcptftp", false, false)
-		}
-		if err != nil && !etcdKeyNotFound(err) {
-			return nil, err
-		}
-		if response != nil && response.Node != nil && response.Node.Value != "" {
-			cfg.dhcpTFTP = response.Node.Value
-		}
-	}
-
-	// DNSForwarders
-	{
-		cfg.dnsForwarders = []string{"8.8.8.8:53", "8.8.4.4:53"} // default uses Google's Public DNS servers
-		response, err := etc.Get("config/"+cfg.zone+"/dnsforwarders", false, false)
-		if err != nil && !etcdKeyNotFound(err) {
-			return nil, err
-		}
-		if response != nil && response.Node != nil && response.Node.Value != "" {
-			cfg.dnsForwarders = strings.Split(",", response.Node.Value)
-		}
-	}
-
-	// dnsCacheMaxTTL
-	{
-		cfg.dnsCacheMaxTTL = 0 // default to no caching
-		response, err := etc.Get("config/"+cfg.zone+"/dnscachemaxttl", false, false)
-		if err != nil && !etcdKeyNotFound(err) {
-			return nil, err
-		}
-		if response != nil && response.Node != nil && response.Node.Value != "" {
-			value, err := strconv.Atoi(response.Node.Value)
-			if err != nil {
-				return nil, err
-			}
-			cfg.dnsCacheMaxTTL = time.Duration(value) * time.Second
-		}
-	}
-
-	// dnsCacheMissingTTL
-	{
-		cfg.dnsCacheMissingTTL = 30 * time.Second // default setting is 30 seconds
-		response, err := etc.Get("config/"+cfg.zone+"/dnscachemissingttl", false, false)
-		if err != nil && !etcdKeyNotFound(err) {
-			return nil, err
-		}
-		if response != nil && response.Node != nil && response.Node.Value != "" {
-			value, err := strconv.Atoi(response.Node.Value)
-			if err != nil {
-				return nil, err
-			}
-			cfg.dnsCacheMissingTTL = time.Duration(value) * time.Second
-		}
-	}
-
-	fmt.Printf("CONFIG: [%+v]\n", cfg)
-
-	return cfg, nil
+	return nil
 }

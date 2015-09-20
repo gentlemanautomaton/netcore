@@ -21,6 +21,7 @@ type Config interface {
 	Gateway() net.IP
 	Domain() string
 	TFTP() string
+	NTP() net.IP
 	LeaseDuration() time.Duration
 	GuestPool() *net.IPNet
 	Options() dhcp4.Options
@@ -51,9 +52,29 @@ type Cfg struct {
 	Gateway       net.IP
 	Domain        string
 	TFTP          string
+	NTP           net.IP
 	LeaseDuration time.Duration
 	GuestPool     *net.IPNet
 	Options       dhcp4.Options
+}
+
+// NewCfg creates a mutable Cfg instance from the given Config interface.
+func NewCfg(c Config) Cfg {
+	return Cfg{
+		Instance:      c.Instance(),
+		NIC:           c.NIC(),
+		IP:            c.IP(),
+		Enabled:       c.Enabled(),
+		Network:       c.Network(),
+		Subnet:        c.Subnet(),
+		Gateway:       c.Gateway(),
+		Domain:        c.Domain(),
+		TFTP:          c.TFTP(),
+		NTP:           c.NTP(),
+		LeaseDuration: c.LeaseDuration(),
+		GuestPool:     c.GuestPool(),
+		Options:       c.Options(),
+	}
 }
 
 // Copy will make a deep copy of the Cfg.
@@ -68,6 +89,7 @@ func (c *Cfg) Copy() Cfg {
 		Gateway:       c.Gateway,
 		Domain:        c.Domain,
 		TFTP:          c.TFTP,
+		NTP:           c.NTP,
 		LeaseDuration: c.LeaseDuration,
 		GuestPool:     c.GuestPool,
 		Options:       c.Options,
@@ -130,6 +152,10 @@ func (c config) Domain() string {
 
 func (c config) TFTP() string {
 	return c.x.TFTP
+}
+
+func (c config) NTP() net.IP {
+	return c.x.NTP
 }
 
 func (c config) LeaseDuration() time.Duration {

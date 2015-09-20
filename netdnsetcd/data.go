@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/coreos/etcd/client"
 	"github.com/coreos/go-etcd/etcd"
 )
 
@@ -18,7 +19,8 @@ func (p *Provider) RR(name string, rrType string) (*netdns.DNSEntry, error) {
 	rrType = strings.ToLower(rrType)
 	key := etcdDNSKeyFromFQDN(name) + "/@" + rrType // structure the lookup key
 
-	response, err := p.client.Get(key, true, true) // do the lookup
+	keys := client.NewKeysAPI(p.c)
+	response, err := keys.Get(key, true, true) // do the lookup
 	if err != nil {
 		return nil, err
 	}
@@ -38,7 +40,8 @@ func (p *Provider) HasRR(name string, rrType string) (bool, error) {
 	rrType = strings.ToLower(rrType)
 	key := etcdDNSKeyFromFQDN(name) + "/@" + rrType // structure the lookup key
 
-	response, err := p.client.Get(key, false, false) // do the lookup
+	keys := client.NewKeysAPI(p.c)
+	response, err := keys.Get(key, false, false) // do the lookup
 	if err != nil {
 		return false, err
 	}
@@ -58,15 +61,17 @@ func (p *Provider) RegisterA(fqdn string, ip net.IP, exclusive bool, ttl uint32,
 	ipHash := fmt.Sprintf("%x", sha1.Sum([]byte(ipString))) // hash the IP address so we can have a unique key name (no other reason for this, honestly)
 	fqdnHash := fmt.Sprintf("%x", sha1.Sum([]byte(fqdn)))   // hash the hostname so we can have a unique key name (no other reason for this, honestly)
 
+	keys := client.NewKeysAPI(p.c)
+
 	// Register the A record
 	aKey := etcdDNSKeyFromFQDN(fqdn) + "/@a"
 	log.Printf("[REGISTER] [%s %d] %s. %d IN A %s\n", aKey, expiration, fqdn, ttl, ipString)
-	_, err := p.client.Set(aKey+"/val/"+ipHash, ipString, expiration)
+	_, err := keys.Set(aKey+"/val/"+ipHash, ipString, expiration)
 	if err != nil {
 		return err
 	}
 	if ttl != 0 {
-		_, err := p.client.Set(aKey+"/ttl", ttlString, expiration)
+		_, err := keys.Set(aKey+"/ttl", ttlString, expiration)
 		if err != nil {
 			return err
 		}
@@ -75,12 +80,12 @@ func (p *Provider) RegisterA(fqdn string, ip net.IP, exclusive bool, ttl uint32,
 	// Register the PTR record
 	ptrKey := etcdDNSArpaKeyFromIP(ip) + "/@ptr"
 	log.Printf("[REGISTER] [%s %d] %s. %d IN A %s\n", ptrKey, expiration, fqdn, ttl, ipString)
-	_, err = p.client.Set(ptrKey+"/val/"+fqdnHash, fqdn, expiration)
+	_, err = keys.Set(ptrKey+"/val/"+fqdnHash, fqdn, expiration)
 	if err != nil {
 		return err
 	}
 	if ttl != 0 {
-		_, err := p.client.Set(aKey+"/ttl", ttlString, expiration)
+		_, err := keys.Set(aKey+"/ttl", ttlString, expiration)
 		if err != nil {
 			return err
 		}
