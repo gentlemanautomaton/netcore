@@ -3,53 +3,73 @@ package netdns
 import "time"
 
 const (
-	ncDefaultTTL     = time.Hour * 3
-	ncMinimumTTL     = time.Second * 60
-	ncCacheRetention = 0
-	//ncCacheRetentionNotFound = time.Second * 30
+	netEnabled        = true
+	netDefaultTTL     = time.Hour * 3
+	netMinimumTTL     = time.Second * 60
+	netCacheRetention = 0
+)
+
+var (
+	netForwarders = []string{"8.8.8.8:53", "8.8.4.4:53"} // default uses Google's Public DNS servers
 )
 
 // Config provides all of the necessary configuration context for the operation
 // of a netcore DNS instance.
 type Config interface {
+	Instance() string
+	Enabled() bool
 	DefaultTTL() time.Duration
 	MinimumTTL() time.Duration
 	CacheRetention() time.Duration
-	//NegativeCacheRetention() time.Duration
 	Forwarders() []string
 }
 
 // NewConfig creates an immutable instance of the Config interface.
-func NewConfig(c Cfg) Config {
+func NewConfig(c *Cfg) Config {
 	return &config{c.Copy()}
 }
 
 // DefaultConfig returns a Config interface with the default values for netcore.
 func DefaultConfig() Config {
 	return config{Cfg{
-		DefaultTTL:     ncDefaultTTL,
-		MinimumTTL:     ncMinimumTTL,
-		CacheRetention: ncCacheRetention,
+		Enabled:        netEnabled,
+		DefaultTTL:     netDefaultTTL,
+		MinimumTTL:     netMinimumTTL,
+		CacheRetention: netCacheRetention,
 	}}
 }
 
 // Cfg provides a mutable implementation of the Config interface. It can be made
 // into an immutable Config instance via the NewConfig function.
 type Cfg struct {
+	Instance       string
+	Enabled        bool
 	DefaultTTL     time.Duration
 	MinimumTTL     time.Duration
 	CacheRetention time.Duration
-	//cacheRetentionNotFound time.Duration
-	Forwarders []string
+	Forwarders     []string
 }
 
 // Copy will make a deep copy of the Cfg.
 func (c Cfg) Copy() Cfg {
 	return Cfg{
+		Enabled:        c.Enabled,
 		DefaultTTL:     c.DefaultTTL,
 		MinimumTTL:     c.MinimumTTL,
 		CacheRetention: c.CacheRetention,
 		Forwarders:     append([]string(nil), c.Forwarders...), // Copy to avoid mutability
+	}
+}
+
+// NewCfg creates a mutable Cfg instance from the given Config interface.
+func NewCfg(c Config) Cfg {
+	return Cfg{
+		Instance:       c.Instance(),
+		Enabled:        c.Enabled(),
+		DefaultTTL:     c.DefaultTTL(),
+		MinimumTTL:     c.MinimumTTL(),
+		CacheRetention: c.CacheRetention(),
+		Forwarders:     c.Forwarders(),
 	}
 }
 
@@ -64,6 +84,14 @@ func Validate(c Config) error {
 // config provides an immutable implementation of the Config interface.
 type config struct {
 	x Cfg
+}
+
+func (c config) Instance() string {
+	return c.x.Instance
+}
+
+func (c config) Enabled() bool {
+	return c.x.Enabled
 }
 
 // DefaultTTL is the default TTL for all positive answers.
@@ -83,15 +111,6 @@ func (c config) CacheRetention() time.Duration {
 	return c.x.CacheRetention
 }
 
-// CacheRetentionNotFound is the duration for which records that aren't found
-// are cached as missing. The value of CacheRetention is used instead if it is
-// smaller.
-/*
-func (c config) CacheRetentionNotFound() time.Duration {
-	return c.x.cacheRetentionNotFound
-}
-*/
-
 // Forwarders returns a list of DNS forwarders to which DNS queries will be
 // be forwarded. Only queries for which this server is not authoritative will
 // be forwarded. If no forwarders are specified then the server will not forward
@@ -101,6 +120,7 @@ func (c config) Forwarders() []string {
 	return append([]string(nil), c.x.Forwarders...) // Copy to avoid mutability
 }
 
+// Experimental:
 /*
 // Config provides all of the necessary configuration context for the operation
 // of a netcore DNS instance.

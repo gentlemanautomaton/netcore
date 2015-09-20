@@ -13,9 +13,9 @@ const minimumLeaseDuration = 60 * time.Second // FIXME: put this in a config
 // of a netcore DNS instance.
 type Config interface {
 	Instance() string
+	Enabled() bool
 	NIC() string
 	IP() net.IP
-	Enabled() bool
 	Network() string
 	Subnet() *net.IPNet
 	Gateway() net.IP
@@ -44,9 +44,9 @@ func DefaultConfig() Config {
 // into an immutable Config instance via the NewConfig function.
 type Cfg struct {
 	Instance      string
+	Enabled       bool
 	NIC           string
 	IP            net.IP
-	Enabled       bool
 	Network       string
 	Subnet        *net.IPNet
 	Gateway       net.IP
@@ -62,9 +62,9 @@ type Cfg struct {
 func NewCfg(c Config) Cfg {
 	return Cfg{
 		Instance:      c.Instance(),
+		Enabled:       c.Enabled(),
 		NIC:           c.NIC(),
 		IP:            c.IP(),
-		Enabled:       c.Enabled(),
 		Network:       c.Network(),
 		Subnet:        c.Subnet(),
 		Gateway:       c.Gateway(),
@@ -81,9 +81,9 @@ func NewCfg(c Config) Cfg {
 func (c *Cfg) Copy() Cfg {
 	return Cfg{
 		Instance:      c.Instance,
+		Enabled:       c.Enabled,
 		NIC:           c.NIC,
 		IP:            c.IP,
-		Enabled:       c.Enabled,
 		Network:       c.Network,
 		Subnet:        c.Subnet,
 		Gateway:       c.Gateway,
@@ -122,16 +122,16 @@ func (c config) Instance() string {
 	return c.x.Instance
 }
 
+func (c config) Enabled() bool {
+	return c.x.Enabled
+}
+
 func (c config) NIC() string {
 	return c.x.NIC
 }
 
 func (c config) IP() net.IP {
 	return c.x.IP
-}
-
-func (c config) Enabled() bool {
-	return c.x.Enabled
 }
 
 func (c config) Network() string {

@@ -16,11 +16,6 @@ func etcdKeyNotFound(err error) bool {
 	return strings.Contains(err.Error(), "Key not found")
 }
 
-// IP returns an IPEntry for the given IP address if it exists, otherwise it
-// returns netdhcp.ErrNotFound
-func (p *Provider) ip(key string) (net.IP, error) {
-}
-
 func responseNodes(r *client.Response, err error) (*client.Node, client.Nodes, bool, error) {
 	if err != nil {
 		return nil, nil, false, err
@@ -47,4 +42,9 @@ func Atod(value string) (time.Duration, error) {
 		return time.Duration{}, err
 	}
 	return time.Seconds * i, nil
+}
+
+// IP returns an IPEntry for the given IP address if it exists, otherwise it
+// returns netdhcp.ErrNotFound
+func (p *Provider) ip(key string) (net.IP, error) {
 }
