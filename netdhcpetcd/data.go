@@ -6,28 +6,38 @@ import (
 	"strings"
 	"time"
 
-	"github.com/coreos/go-etcd/etcd"
+	"golang.org/x/net/context"
+
+	"github.com/coreos/etcd/client"
 )
 
 // IP returns an IPEntry for the given IP address if it exists, otherwise it
 // returns netdhcp.ErrNotFound
 func (p *Provider) IP(ip net.IP) (netdhcp.IPEntry, error) {
 	key := etcdKeyFromIP(ip)
-	response, err := p.client.Get(key, false, false)
+	keys := client.NewKeysAPI(p.c)
+	response, err := keys.Get(context.Background(), key, nil)
+	if err != nil {
+		if etcdKeyNotFound(err) {
+			err = netdhcp.ErrNotFound
+		}
+		return netdhcp.IPEntry{}, err
+	}
 	if response == nil || response.Node == nil {
-		return IPEntry{}, netdhcp.ErrNotFound
+		return netdhcp.IPEntry{}, netdhcp.ErrNotFound
 	}
 	mac, err := net.ParseMAC(response.Node.Value)
 	if err != nil {
-		return IPEntry{}, err
+		return netdhcp.IPEntry{}, err
 	}
-	return IPEntry{MAC: mac}, nil
+	return netdhcp.IPEntry{MAC: mac}, nil
 }
 
 // HasIP returns true if the IP address has been allocated.
 func (p *Provider) HasIP(ip net.IP) bool {
 	key := etcdKeyFromIP(ip)
-	response, _ := p.client.Get(key, false, false)
+	keys := client.NewKeysAPI(p.c)
+	response, _ := keys.Get(context.Background(), key, nil)
 	if response != nil && response.Node != nil {
 		return true
 	}
@@ -39,7 +49,7 @@ func (p *Provider) HasIP(ip net.IP) bool {
 func (p *Provider) MAC(mac net.HardwareAddr, cascade bool) (*netdhcp.MACEntry, bool, error) {
 	// TODO: First attempt to retrieve the entry from a cache of some kind (that can be dirtied)
 	// NOTE: The cache should always return a deep copy of the cached value
-	entry := MACEntry{MAC: mac}
+	entry := netdhcp.MACEntry{MAC: mac}
 
 	// Copy cascaded attributes by making recursive calls to this function
 	if cascade && len(mac) > 1 {
@@ -51,7 +61,8 @@ func (p *Provider) MAC(mac net.HardwareAddr, cascade bool) (*netdhcp.MACEntry, b
 
 	// Fetch attributes and lease data for this MAC
 	key := etcdKeyFromMAC(mac)
-	response, err := p.client.Get(key, true, true) // do the lookup
+	keys := client.NewKeysAPI(p.c)
+	response, err := keys.Get(context.Background(), key, &client.GetOptions{Recursive: true, Sort: true}) // do the lookup
 	if err != nil {
 		// FIXME: Return the etcd error for everything except missing keys
 		//return nil, false, err
@@ -73,9 +84,11 @@ func (p *Provider) MAC(mac net.HardwareAddr, cascade bool) (*netdhcp.MACEntry, b
 func (p *Provider) RenewLease(lease *netdhcp.MACEntry) error {
 	// FIXME: Validate lease
 	duration := uint64(lease.Duration.Seconds() + 0.5) // Half second jitter to hide network delay
-	_, err := p.client.CompareAndSwap("dhcp/"+lease.IP.String(), lease.MAC.String(), duration, lease.MAC.String(), 0)
+	keys := client.NewKeysAPI(p.c)
+	// FIXME: Figure out the new etcd equivalent of CompareAndSwap
+	_, err := keys.CompareAndSwap("dhcp/"+lease.IP.String(), lease.MAC.String(), duration, lease.MAC.String(), 0)
 	if err == nil {
-		return db.WriteLease(lease)
+		return p.WriteLease(lease)
 	}
 	return err
 }
@@ -84,7 +97,8 @@ func (p *Provider) RenewLease(lease *netdhcp.MACEntry) error {
 func (p *Provider) CreateLease(lease *netdhcp.MACEntry) error {
 	// FIXME: Validate lease
 	duration := uint64(lease.Duration.Seconds() + 0.5)
-	_, err := p.client.Create("dhcp/"+lease.IP.String(), lease.MAC.String(), duration)
+	keys := client.NewKeysAPI(p.c)
+	_, err := keys.Create(context.Background(), "dhcp/"+lease.IP.String(), lease.MAC.String(), duration)
 	if err == nil {
 		return p.WriteLease(lease)
 	}
@@ -97,14 +111,15 @@ func (p *Provider) WriteLease(lease *netdhcp.MACEntry) error {
 	// NOTE: This does not save attributes. That should probably happen in a different function.
 	duration := uint64(lease.Duration.Seconds() + 0.5) // Half second jitter to hide network delay
 	// FIXME: Decide what to do if either of these calls returns an error
-	p.client.CreateDir("dhcp/"+lease.MAC.String(), 0)
-	p.client.Set("dhcp/"+lease.MAC.String()+"/ip", lease.IP.String(), duration)
+	keys := client.NewKeysAPI(p.c)
+	keys.Set(context.Background(), HardwareKey(lease.MAC), client.SetOptions{Dir: true})
+	keys.Set(context.Background(), HardwareKey(lease.MAC)+"/ip", lease.IP.String(), duration)
 	return nil
 }
 
 // TODO: Write function for saving attributes to etcd?
 
-func etcdNodeToMACEntry(root *etcd.Node, entry *netdhcp.MACEntry) {
+func etcdNodeToMACEntry(root *client.Node, entry *netdhcp.MACEntry) {
 	for _, node := range root.Nodes {
 		if node.Dir {
 			continue // Ignore subdirectories

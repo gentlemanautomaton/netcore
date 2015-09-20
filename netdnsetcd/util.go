@@ -20,7 +20,7 @@ func responseNodes(r *client.Response, err error) (*client.Node, client.Nodes, b
 	if err != nil {
 		return nil, nil, false, err
 	}
-	if r == nil || r.Node == nil || len(r) == 0 {
+	if r == nil || r.Node == nil || len(r.Node.Nodes) == 0 {
 		return nil, nil, false, nil
 	}
 	return r.Node, r.Node.Nodes, true, nil
@@ -37,11 +37,11 @@ func nodeKey(node *client.Node) string {
 
 // Atod converts a string containing a number of seconds into a time.Duration.
 func Atod(value string) (time.Duration, error) {
-	i, err := strconv.Atoi(value)
+	v, err := strconv.Atoi(value)
 	if err != nil {
-		return time.Duration{}, err
+		return time.Duration(0), err
 	}
-	return time.Seconds * i, nil
+	return time.Duration(v) * time.Second, nil
 }
 
 func reverseSlice(in []string) []string {

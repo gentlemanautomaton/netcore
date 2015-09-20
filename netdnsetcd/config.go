@@ -40,13 +40,13 @@ func (p *Provider) Config(instance string) (netdns.Config, error) {
 		nodesToConfig(configNodes, &cfg)
 	}
 
-	_, server, ok, err := responseNodes(keys.Get(context.Background(), ServerKey(instance), &client.GetOptions{Recursive: true}))
+	_, serverNodes, ok, err := responseNodes(keys.Get(context.Background(), ServerKey(instance), &client.GetOptions{Recursive: true}))
 	if err != nil && !etcdKeyNotFound(err) {
 		// FIXME: Return nil config when server isn't defined
 		return nil, err
 	}
 	if ok {
-		nodesToConfig(configNodes, &cfg)
+		nodesToConfig(serverNodes, &cfg)
 	}
 
 	fmt.Printf("DHCP ETCD CONFIG: [%+v]\n", &cfg)

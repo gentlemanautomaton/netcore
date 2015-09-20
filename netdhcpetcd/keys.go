@@ -1,5 +1,7 @@
 package netdhcpetcd
 
+import "net"
+
 const (
 	RootBucket     = "/netcore/dhcp"
 	ConfigBucket   = RootBucket + "/config"
@@ -35,10 +37,10 @@ func NetworkKey(network string) string {
 
 // HostKey returns the etcd key of the given host ID
 func HostKey(host string) string {
-	return HostBucket + "/" + network
+	return HostBucket + "/" + host
 }
 
 // HardwareKey returns the etcd key of the given mac address
-func HardwareKey(mac string) string {
-	return HardwareBucket + "/" + mac
+func HardwareKey(mac net.HardwareAddr) string {
+	return HardwareBucket + "/" + mac.String()
 }

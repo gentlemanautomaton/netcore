@@ -8,19 +8,18 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"time"
+
+	"golang.org/x/net/context"
 
 	"github.com/coreos/etcd/client"
-	"github.com/coreos/go-etcd/etcd"
 )
 
 // RR returns the resource record for the given name and type.
 func (p *Provider) RR(name string, rrType string) (*netdns.DNSEntry, error) {
 	//log.Printf("[Lookup [%s] [%s]]\n", q.Name, qType)
-	rrType = strings.ToLower(rrType)
-	key := etcdDNSKeyFromFQDN(name) + "/@" + rrType // structure the lookup key
-
 	keys := client.NewKeysAPI(p.c)
-	response, err := keys.Get(key, true, true) // do the lookup
+	response, err := keys.Get(context.Background(), ResourceTypeKey(name, rrType), &client.GetOptions{Recursive: true, Sort: true}) // do the lookup
 	if err != nil {
 		return nil, err
 	}
@@ -37,24 +36,19 @@ func (p *Provider) RR(name string, rrType string) (*netdns.DNSEntry, error) {
 
 // HasRR returns true if a resource record exists with the given name and type.
 func (p *Provider) HasRR(name string, rrType string) (bool, error) {
-	rrType = strings.ToLower(rrType)
-	key := etcdDNSKeyFromFQDN(name) + "/@" + rrType // structure the lookup key
-
 	keys := client.NewKeysAPI(p.c)
-	response, err := keys.Get(key, false, false) // do the lookup
+	response, err := keys.Get(context.Background(), ResourceTypeKey(name, rrType), nil) // do the lookup
 	if err != nil {
 		return false, err
 	}
-
 	if response != nil && response.Node != nil && response.Node.Dir {
 		return true, nil
 	}
-
 	return false, nil
 }
 
 // RegisterA creates an A record for the given fully qualified domain name.
-func (p *Provider) RegisterA(fqdn string, ip net.IP, exclusive bool, ttl uint32, expiration uint64) error {
+func (p *Provider) RegisterA(fqdn string, ip net.IP, exclusive bool, ttl uint32, expiration time.Duration) error {
 	fqdn = cleanFQDN(fqdn)
 	ipString := ip.String()
 	ttlString := fmt.Sprintf("%d", ttl)
@@ -63,29 +57,31 @@ func (p *Provider) RegisterA(fqdn string, ip net.IP, exclusive bool, ttl uint32,
 
 	keys := client.NewKeysAPI(p.c)
 
+	options := &client.SetOptions{TTL: expiration}
+
 	// Register the A record
-	aKey := etcdDNSKeyFromFQDN(fqdn) + "/@a"
+	aKey := ResourceTypeKey(fqdn, "A")
 	log.Printf("[REGISTER] [%s %d] %s. %d IN A %s\n", aKey, expiration, fqdn, ttl, ipString)
-	_, err := keys.Set(aKey+"/val/"+ipHash, ipString, expiration)
+	_, err := keys.Set(context.Background(), aKey+"/val/"+ipHash, ipString, options)
 	if err != nil {
 		return err
 	}
 	if ttl != 0 {
-		_, err := keys.Set(aKey+"/ttl", ttlString, expiration)
+		_, err := keys.Set(context.Background(), aKey+"/"+TTLField, ttlString, options)
 		if err != nil {
 			return err
 		}
 	}
 
 	// Register the PTR record
-	ptrKey := etcdDNSArpaKeyFromIP(ip) + "/@ptr"
+	ptrKey := ArpaKey(ip) + "/@ptr"
 	log.Printf("[REGISTER] [%s %d] %s. %d IN A %s\n", ptrKey, expiration, fqdn, ttl, ipString)
-	_, err = keys.Set(ptrKey+"/val/"+fqdnHash, fqdn, expiration)
+	_, err = keys.Set(context.Background(), ptrKey+"/val/"+fqdnHash, fqdn, options)
 	if err != nil {
 		return err
 	}
 	if ttl != 0 {
-		_, err := keys.Set(aKey+"/ttl", ttlString, expiration)
+		_, err := keys.Set(context.Background(), aKey+"/ttl", ttlString, options)
 		if err != nil {
 			return err
 		}
@@ -94,7 +90,7 @@ func (p *Provider) RegisterA(fqdn string, ip net.IP, exclusive bool, ttl uint32,
 	return err
 }
 
-func etcdNodeToDNSEntry(root *etcd.Node) *netdns.DNSEntry {
+func etcdNodeToDNSEntry(root *client.Node) *netdns.DNSEntry {
 	entry := &netdns.DNSEntry{}
 	for _, node := range root.Nodes {
 		key := strings.Replace(node.Key, root.Key+"/", "", 1)
@@ -123,7 +119,7 @@ func etcdNodeToDNSEntry(root *etcd.Node) *netdns.DNSEntry {
 	return entry
 }
 
-func etcdNodeToDNSValue(node *etcd.Node, value *netdns.DNSValue) {
+func etcdNodeToDNSValue(node *client.Node, value *netdns.DNSValue) {
 	value.Expiration = node.Expiration
 
 	if node.TTL > 0 {
@@ -143,16 +139,4 @@ func etcdNodeToDNSValue(node *etcd.Node, value *netdns.DNSValue) {
 
 func cleanFQDN(fqdn string) string {
 	return strings.ToLower(strings.TrimSuffix(fqdn, "."))
-}
-
-func etcdDNSKeyFromFQDN(fqdn string) string {
-	parts := strings.Split(cleanFQDN(fqdn), ".")   // breakup the queryed name
-	path := strings.Join(reverseSlice(parts), "/") // reverse and join them with a slash delimiter
-	return "/dns/" + path
-}
-
-func etcdDNSArpaKeyFromIP(ip net.IP) string {
-	// FIXME: Support IPv6 addresses
-	slashedIP := strings.Replace(ip.To4().String(), ".", "/", -1)
-	return "dns/arpa/in-addr/" + slashedIP
 }
