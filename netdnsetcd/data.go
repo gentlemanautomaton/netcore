@@ -1,14 +1,9 @@
 package netdnsetcd
 
 import (
-	"crypto/sha1"
 	"dustywilson/netcore/netdns"
-	"fmt"
-	"log"
-	"net"
 	"strconv"
 	"strings"
-	"time"
 
 	"golang.org/x/net/context"
 
@@ -45,49 +40,6 @@ func (p *Provider) HasRR(name string, rrType string) (bool, error) {
 		return true, nil
 	}
 	return false, nil
-}
-
-// RegisterA creates an A record for the given fully qualified domain name.
-func (p *Provider) RegisterA(fqdn string, ip net.IP, exclusive bool, ttl uint32, expiration time.Duration) error {
-	fqdn = cleanFQDN(fqdn)
-	ipString := ip.String()
-	ttlString := fmt.Sprintf("%d", ttl)
-	ipHash := fmt.Sprintf("%x", sha1.Sum([]byte(ipString))) // hash the IP address so we can have a unique key name (no other reason for this, honestly)
-	fqdnHash := fmt.Sprintf("%x", sha1.Sum([]byte(fqdn)))   // hash the hostname so we can have a unique key name (no other reason for this, honestly)
-
-	keys := client.NewKeysAPI(p.c)
-
-	options := &client.SetOptions{TTL: expiration}
-
-	// Register the A record
-	aKey := ResourceTypeKey(fqdn, "A")
-	log.Printf("[REGISTER] [%s %d] %s. %d IN A %s\n", aKey, expiration, fqdn, ttl, ipString)
-	_, err := keys.Set(context.Background(), aKey+"/val/"+ipHash, ipString, options)
-	if err != nil {
-		return err
-	}
-	if ttl != 0 {
-		_, err := keys.Set(context.Background(), aKey+"/"+TTLField, ttlString, options)
-		if err != nil {
-			return err
-		}
-	}
-
-	// Register the PTR record
-	ptrKey := ArpaKey(ip) + "/@ptr"
-	log.Printf("[REGISTER] [%s %d] %s. %d IN A %s\n", ptrKey, expiration, fqdn, ttl, ipString)
-	_, err = keys.Set(context.Background(), ptrKey+"/val/"+fqdnHash, fqdn, options)
-	if err != nil {
-		return err
-	}
-	if ttl != 0 {
-		_, err := keys.Set(context.Background(), aKey+"/ttl", ttlString, options)
-		if err != nil {
-			return err
-		}
-	}
-
-	return err
 }
 
 func etcdNodeToDNSEntry(root *client.Node) *netdns.DNSEntry {
@@ -135,8 +87,4 @@ func etcdNodeToDNSValue(node *client.Node, value *netdns.DNSValue) {
 			value.Attr[key] = attrNode.Value
 		}
 	}
-}
-
-func cleanFQDN(fqdn string) string {
-	return strings.ToLower(strings.TrimSuffix(fqdn, "."))
 }

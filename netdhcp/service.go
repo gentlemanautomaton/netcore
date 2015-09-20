@@ -303,7 +303,7 @@ func (s *Service) maintainDNSRecords(entry *MACEntry, packet dhcp4.Packet, reqOp
 		if name != "" {
 			host := strings.ToLower(strings.Join([]string{name, string(domain)}, "."))
 			// TODO: Pick a TTL for the record and use it
-			s.p.RegisterA(host, entry.IP, false, 0, uint64(s.cfg.LeaseDuration().Seconds()+0.5))
+			s.p.RegisterA(host, entry.IP, false, 0, s.cfg.LeaseDuration())
 		} else {
 			log.Println(">> No host name")
 		}

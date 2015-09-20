@@ -1,6 +1,9 @@
 package netdhcp
 
-import "net"
+import (
+	"net"
+	"time"
+)
 
 // Provider implements all storage interfaces necessary for operation of
 // the DHCP service.
@@ -24,5 +27,5 @@ type DataProvider interface {
 	RenewLease(lease *MACEntry) error
 	CreateLease(lease *MACEntry) error
 	WriteLease(lease *MACEntry) error
-	RegisterA(fqdn string, ip net.IP, exclusive bool, ttl uint32, expiration uint64) error
+	RegisterA(fqdn string, ip net.IP, exclusive bool, ttl uint32, expiration time.Duration) error
 }

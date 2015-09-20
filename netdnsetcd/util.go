@@ -51,3 +51,7 @@ func reverseSlice(in []string) []string {
 	}
 	return out
 }
+
+func cleanFQDN(fqdn string) string {
+	return strings.ToLower(strings.TrimSuffix(fqdn, "."))
+}

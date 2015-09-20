@@ -1,7 +1,10 @@
 package netdhcpetcd
 
 import (
+	"crypto/sha1"
 	"dustywilson/netcore/netdhcp"
+	"fmt"
+	"log"
 	"net"
 	"strings"
 	"time"
@@ -62,7 +65,8 @@ func (p *Provider) MAC(mac net.HardwareAddr, cascade bool) (*netdhcp.MACEntry, b
 	// Fetch attributes and lease data for this MAC
 	key := etcdKeyFromMAC(mac)
 	keys := client.NewKeysAPI(p.c)
-	response, err := keys.Get(context.Background(), key, &client.GetOptions{Recursive: true, Sort: true}) // do the lookup
+	options := &client.GetOptions{Recursive: true, Sort: true}
+	response, err := keys.Get(context.Background(), key, options) // do the lookup
 	if err != nil {
 		// FIXME: Return the etcd error for everything except missing keys
 		//return nil, false, err
@@ -96,9 +100,9 @@ func (p *Provider) RenewLease(lease *netdhcp.MACEntry) error {
 // CreateLease will attempt to create a new lease.
 func (p *Provider) CreateLease(lease *netdhcp.MACEntry) error {
 	// FIXME: Validate lease
-	duration := uint64(lease.Duration.Seconds() + 0.5)
 	keys := client.NewKeysAPI(p.c)
-	_, err := keys.Create(context.Background(), "dhcp/"+lease.IP.String(), lease.MAC.String(), duration)
+	options := &client.SetOptions{TTL: lease.Duration}
+	_, err := keys.Set(context.Background(), IPKey(lease.IP), lease.MAC.String(), options)
 	if err == nil {
 		return p.WriteLease(lease)
 	}
@@ -109,11 +113,10 @@ func (p *Provider) CreateLease(lease *netdhcp.MACEntry) error {
 func (p *Provider) WriteLease(lease *netdhcp.MACEntry) error {
 	// FIXME: Validate lease
 	// NOTE: This does not save attributes. That should probably happen in a different function.
-	duration := uint64(lease.Duration.Seconds() + 0.5) // Half second jitter to hide network delay
-	// FIXME: Decide what to do if either of these calls returns an error
+	// FIXME: Decide what to do if this call returns an error
 	keys := client.NewKeysAPI(p.c)
-	keys.Set(context.Background(), HardwareKey(lease.MAC), client.SetOptions{Dir: true})
-	keys.Set(context.Background(), HardwareKey(lease.MAC)+"/ip", lease.IP.String(), duration)
+	options := &client.SetOptions{TTL: lease.Duration} // FIXME: Add half second jitter to hide network delay?
+	keys.Set(context.Background(), HardwareKey(lease.MAC)+"/ip", lease.IP.String(), options)
 	return nil
 }
 
@@ -128,7 +131,7 @@ func etcdNodeToMACEntry(root *client.Node, entry *netdhcp.MACEntry) {
 		switch key {
 		case "ip":
 			entry.IP = net.ParseIP(node.Value)
-			entry.Duration = time.Duration(node.TTL)
+			entry.Duration = node.TTLDuration()
 		default:
 			if entry.Attr == nil {
 				entry.Attr = make(map[string]string)
@@ -136,6 +139,49 @@ func etcdNodeToMACEntry(root *client.Node, entry *netdhcp.MACEntry) {
 			entry.Attr[key] = node.Value
 		}
 	}
+}
+
+// RegisterA creates an A record for the given fully qualified domain name.
+func (p *Provider) RegisterA(fqdn string, ip net.IP, exclusive bool, ttl uint32, expiration time.Duration) error {
+	fqdn = cleanFQDN(fqdn)
+	ipString := ip.String()
+	ttlString := fmt.Sprintf("%d", ttl)
+	ipHash := fmt.Sprintf("%x", sha1.Sum([]byte(ipString))) // hash the IP address so we can have a unique key name (no other reason for this, honestly)
+	fqdnHash := fmt.Sprintf("%x", sha1.Sum([]byte(fqdn)))   // hash the hostname so we can have a unique key name (no other reason for this, honestly)
+
+	keys := client.NewKeysAPI(p.c)
+
+	options := &client.SetOptions{TTL: expiration}
+
+	// Register the A record
+	aKey := ResourceTypeKey(fqdn, "A")
+	log.Printf("[REGISTER] [%s %d] %s. %d IN A %s\n", aKey, expiration, fqdn, ttl, ipString)
+	_, err := keys.Set(context.Background(), aKey+"/val/"+ipHash, ipString, options)
+	if err != nil {
+		return err
+	}
+	if ttl != 0 {
+		_, err := keys.Set(context.Background(), aKey+"/"+TTLField, ttlString, options)
+		if err != nil {
+			return err
+		}
+	}
+
+	// Register the PTR record
+	ptrKey := ArpaKey(ip) + "/@ptr"
+	log.Printf("[REGISTER] [%s %d] %s. %d IN A %s\n", ptrKey, expiration, fqdn, ttl, ipString)
+	_, err = keys.Set(context.Background(), ptrKey+"/val/"+fqdnHash, fqdn, options)
+	if err != nil {
+		return err
+	}
+	if ttl != 0 {
+		_, err := keys.Set(context.Background(), aKey+"/ttl", ttlString, options)
+		if err != nil {
+			return err
+		}
+	}
+
+	return err
 }
 
 func etcdKeyFromIP(ip net.IP) string {

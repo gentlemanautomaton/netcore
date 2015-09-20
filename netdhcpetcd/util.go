@@ -43,6 +43,18 @@ func Atod(value string) (time.Duration, error) {
 	return time.Duration(v) * time.Second, nil
 }
 
+func reverseSlice(in []string) []string {
+	out := make([]string, len(in))
+	for i := range in {
+		out[len(in)-i-1] = in[i]
+	}
+	return out
+}
+
+func cleanFQDN(fqdn string) string {
+	return strings.ToLower(strings.TrimSuffix(fqdn, "."))
+}
+
 // IP returns an IPEntry for the given IP address if it exists, otherwise it
 // returns netdhcp.ErrNotFound
 //func (p *Provider) ip(key string) (net.IP, error) {
