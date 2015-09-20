@@ -50,6 +50,7 @@ type IPEntry struct {
 // MACEntry represents a MAC address record retrieved from the underlying
 // provider.
 type MACEntry struct {
+	Network  string
 	MAC      net.HardwareAddr
 	IP       net.IP
 	Duration time.Duration

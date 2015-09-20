@@ -2,6 +2,7 @@ package netdhcpetcd
 
 import (
 	"crypto/sha1"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -101,16 +102,17 @@ func (p *Provider) RenewLease(lease *netdhcp.MACEntry) error {
 
 // CreateLease will attempt to create a new lease.
 func (p *Provider) CreateLease(lease *netdhcp.MACEntry) error {
-	// FIXME: Validate lease
-	keys := client.NewKeysAPI(p.c)
-	cfg, err := p.Config(`WHAT-GOES-HERE?`)
-	if err != nil {
-		return err
+	if lease.Network == "" {
+		return errors.New("Lease does not specify network") // FIXME: Make this into a var somewhere
 	}
-	network := cfg.Network() // FIXME: Is this how I get the network name?
-	_, err = keys.Set(context.Background(), IPKey(network, lease.IP), lease.MAC.String(), &client.SetOptions{
-		TTL: lease.Duration,
-	})
+	if lease.IP == nil {
+		return errors.New("Lease does not specifiy IP address") // FIXME: Make this into a var somewhere
+	}
+	// FIXME: Validate lease
+	duration := lease.Duration + (time.Second / 2) // Half second jitter to hide network delay
+	keys := client.NewKeysAPI(p.c)
+	options := &client.SetOptions{TTL: duration}
+	_, err := keys.Set(context.Background(), IPKey(lease.Network, lease.IP), lease.MAC.String(), options)
 	if err == nil {
 		return p.WriteLease(lease)
 	}
@@ -122,8 +124,9 @@ func (p *Provider) WriteLease(lease *netdhcp.MACEntry) error {
 	// FIXME: Validate lease
 	// NOTE: This does not save attributes. That should probably happen in a different function.
 	// FIXME: Decide what to do if this call returns an error
+	duration := lease.Duration + (time.Second / 2) // Half second jitter to hide network delay
 	keys := client.NewKeysAPI(p.c)
-	options := &client.SetOptions{TTL: lease.Duration} // FIXME: Add half second jitter to hide network delay?
+	options := &client.SetOptions{TTL: duration}
 	keys.Set(context.Background(), HardwareKey(lease.MAC)+"/ip", lease.IP.String(), options)
 	return nil
 }
