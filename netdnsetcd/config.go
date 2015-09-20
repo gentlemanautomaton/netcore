@@ -1,11 +1,11 @@
 package netdnsetcd
 
 import (
-	"dustywilson/netcore/netdns"
 	"fmt"
 	"strings"
 
 	"github.com/coreos/etcd/client"
+	"github.com/dustywilson/netcore/netdns"
 	"golang.org/x/net/context"
 )
 

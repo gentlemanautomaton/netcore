@@ -1,13 +1,12 @@
 package netdhcpetcd
 
 import (
-	"dustywilson/netcore/netdhcp"
 	"fmt"
 	"net"
 
-	"golang.org/x/net/context"
-
 	"github.com/coreos/etcd/client"
+	"github.com/dustywilson/netcore/netdhcp"
+	"golang.org/x/net/context"
 )
 
 // Init creates the initial etcd buckets for DHCP data.

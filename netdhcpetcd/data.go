@@ -2,16 +2,15 @@ package netdhcpetcd
 
 import (
 	"crypto/sha1"
-	"dustywilson/netcore/netdhcp"
 	"fmt"
 	"log"
 	"net"
 	"strings"
 	"time"
 
-	"golang.org/x/net/context"
-
 	"github.com/coreos/etcd/client"
+	"github.com/dustywilson/netcore/netdhcp"
+	"golang.org/x/net/context"
 )
 
 // IP returns an IPEntry for the given IP address if it exists, otherwise it

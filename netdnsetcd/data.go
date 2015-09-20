@@ -1,13 +1,12 @@
 package netdnsetcd
 
 import (
-	"dustywilson/netcore/netdns"
 	"strconv"
 	"strings"
 
-	"golang.org/x/net/context"
-
 	"github.com/coreos/etcd/client"
+	"github.com/dustywilson/netcore/netdns"
+	"golang.org/x/net/context"
 )
 
 // RR returns the resource record for the given name and type.
