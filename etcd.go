@@ -30,7 +30,7 @@ func etcdClient() (client.Client, error) {
 			Endpoints:               endpoints,
 			Transport:               client.DefaultTransport,
 			HeaderTimeoutPerRequest: time.Second,
-		}), nil
+		})
 	}
-	return nil, ErrNoEtcdServers
+	return nil, ErrNoEtcdEndpoints
 }

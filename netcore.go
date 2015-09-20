@@ -30,8 +30,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	dhcpService := netdhcp.NewService(netdhcpetcd.NewProvider(etcdclient, netdhcp.DefaultConfig()), instance)
-	dnsService := netdns.NewService(netdnsetcd.NewProvider(etcdclient, netdns.DefaultConfig()), instance)
+	dhcpService := netdhcp.NewService(netdhcpetcd.NewProvider(etcdclient, netdhcp.DefaultConfig()), inst)
+	dnsService := netdns.NewService(netdnsetcd.NewProvider(etcdclient, netdns.DefaultConfig()), inst)
 
 	// TODO: Print NETCORE [SERVICE] STARTED for each service when they become
 	//       ready.

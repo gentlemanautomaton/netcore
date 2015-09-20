@@ -103,8 +103,12 @@ func (p *Provider) RenewLease(lease *netdhcp.MACEntry) error {
 func (p *Provider) CreateLease(lease *netdhcp.MACEntry) error {
 	// FIXME: Validate lease
 	keys := client.NewKeysAPI(p.c)
-	network := nil // FIXME: Where do I get the network name?
-	_, err := keys.Set(context.Background(), IPKey(network, lease.IP), lease.MAC.String(), &client.SetOptions{
+	cfg, err := p.Config(`WHAT-GOES-HERE?`)
+	if err != nil {
+		return err
+	}
+	network := cfg.Network() // FIXME: Is this how I get the network name?
+	_, err = keys.Set(context.Background(), IPKey(network, lease.IP), lease.MAC.String(), &client.SetOptions{
 		TTL: lease.Duration,
 	})
 	if err == nil {
