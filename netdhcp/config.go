@@ -105,7 +105,7 @@ func (c *Cfg) Copy() Cfg {
 		NTP:           c.NTP,
 		LeaseDuration: c.LeaseDuration,
 		GuestPool:     c.GuestPool,
-		Options:       c.Options,
+		Options:       copyOptions(c.Options),
 	}
 }
 
@@ -180,7 +180,18 @@ func (c config) GuestPool() *net.IPNet {
 }
 
 func (c config) Options() dhcp4.Options {
-	return c.x.Options
+	return copyOptions(c.x.Options)
+}
+
+func copyOptions(source dhcp4.Options) dhcp4.Options {
+	var options dhcp4.Options
+	if source != nil {
+		options = make(dhcp4.Options, len(source))
+		for k, v := range source {
+			options[k] = v
+		}
+	}
+	return options
 }
 
 // Reference:
