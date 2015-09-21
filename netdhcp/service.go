@@ -7,34 +7,36 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/net/context"
+
 	"github.com/krolaw/dhcp4"
 )
 
 // Service provides netcore DHCP services.
 type Service struct {
-	instance string
-	cfg      Config
-	p        Provider
-	started  chan bool
-	done     chan Completion
+	prov    Provider
+	inst    Instance
+	net     Network
+	cfg     Config
+	started chan bool
+	done    chan Completion
 }
 
 // NewService creates a new netcore DHCP service.
-func NewService(p Provider, instance string) *Service {
+func NewService(provider Provider, instance string) *Service {
 	s := &Service{
-		instance: instance,
-		p:        p,
-		started:  make(chan bool, 1),
-		done:     make(chan Completion, 1),
+		prov:    provider,
+		started: make(chan bool, 1),
+		done:    make(chan Completion, 1),
 	}
 
-	go s.init()
+	go s.init(instance)
 
 	return s
 }
 
-func (s *Service) init() {
-	if err := s.loadConfig(); err != nil {
+func (s *Service) init(instance string) {
+	if err := s.loadConfig(instance); err != nil {
 		s.signalStarted(false)
 		s.signalDone(false, err)
 		return
@@ -54,19 +56,41 @@ func (s *Service) signalDone(initialized bool, err error) {
 	close(s.done)
 }
 
-func (s *Service) loadConfig() error {
-	// FIXME: Don't make this Init() call, but instead handle initial setup via the CLI
-	if err := s.p.Init(); err != nil {
-		return err
-	}
-	cfg, err := s.p.Config(s.instance)
+func (s *Service) loadConfig(instance string) error {
+	gc, err := s.prov.Config()
 	if err != nil {
 		return err
 	}
+
+	inst := s.prov.Instance(instance)
+	ic, err := inst.Config()
+	if err != nil {
+		return err
+	}
+
+	network := ic.Network()
+	if network == "" {
+		network = gc.Network()
+		if network == "" {
+			return ErrNoConfigNetwork
+		}
+	}
+
+	netwrk := s.prov.Network(network)
+	nc, err := netwrk.Config()
+	if err != nil {
+		return err
+	}
+
+	cfg := Merge(gc, ic, nc)
 	if err := Validate(cfg); err != nil {
 		return err
 	}
+
+	s.inst = inst
+	s.net = netwrk
 	s.cfg = cfg
+
 	return nil
 }
 
@@ -97,17 +121,25 @@ func (s *Service) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, reqO
 		}
 		log.Printf("DHCP Discover from %s\n", mac.String())
 
-		// Look up the MAC entry with cascaded attributes
-		lease, found, err := s.p.MAC(mac, true)
+		// FIXME: Look up the MAC entry with cascaded attributes?
+		data, found, err := s.net.MAC.Lookup(context.Background(), mac)
 		if err != nil {
 			// FIXME: Log error?
 			return nil
 		}
 
+		// TODO: Enumerate all reservations and previous dynamic allocations and
+		//       select the most appropriate lease based on the following algorithm:
+		// 1. Reservation with active lease matching this MAC, most recent first
+		// 2. Reservation without any active lease, most recent first
+		// 3. Dynamic Allocation with active lease matching this MAC, most recent first
+		// 4. Dynamic Allocation without any active lease, most recent first
+		// 5. New Dynamic Allocation from pool
+
 		// Existing Lease
 		if found {
-			options := s.getOptionsFromMAC(lease)
-			log.Printf("DHCP Discover from %s (we offer %s from current lease)\n", lease.MAC.String(), lease.IP.String())
+			options := s.getOptionsFromMAC(data)
+			log.Printf("DHCP Discover from %s (we offer %s from current lease)\n", mac.String(), lease.IP.String())
 			// for x, y := range reqOptions {
 			// 	log.Printf("\tR[%v] %v %s\n", x, y, y)
 			// }

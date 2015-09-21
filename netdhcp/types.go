@@ -10,6 +10,9 @@ var (
 	// ErrNoConfig indicates that no configuration was provided to the DHCP
 	// service.
 	ErrNoConfig = errors.New("Configuration not provided")
+	// ErrNoConfigNetwork indicates that no network was specified in the DHCP
+	// configuration.
+	ErrNoConfigNetwork = errors.New("Network not specified in configuration")
 	// ErrNoConfigIP indicates that no IP address was provided in the DHCP
 	// configuration.
 	ErrNoConfigIP = errors.New("IP not specified in configuration")
@@ -72,4 +75,5 @@ type Device struct {
 }
 
 type MAC struct {
+	MAC string
 }

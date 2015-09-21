@@ -126,6 +126,29 @@ func Validate(c Config) error {
 	return nil
 }
 
+// MergeConfig will collapse the provided configurations into a single instance.
+func Merge(c ...Config) Config {
+	// TODO: Consider an alternative implementation that maintains references to
+	//       all of the members and queries them in series for each method call.
+	if len(c) == 0 {
+		return nil
+	}
+	cfg := NewCfg(c[1])
+	for _, s := range c[1:] {
+		if enabled := s.Enabled(); enabled {
+			cfg.Enabled = enabled
+		}
+		if nic := s.NIC(); nic != "" {
+			cfg.NIC = nic
+		}
+		if ip := s.IP(); ip != nil {
+			cfg.IP = ip
+		}
+		// FIXME: Finish writing this
+	}
+	return &config{cfg}
+}
+
 // config provides an immutable implementation of the Config interface.
 type config struct {
 	x Cfg

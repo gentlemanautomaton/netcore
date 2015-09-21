@@ -26,22 +26,24 @@ type Global struct {
 
 // InstanceProvider provides access to Instance data.
 type InstanceProvider interface {
-	Instance(instance string) *Instance
+	Instance(instance string) Instance
 }
 
 // NetworkProvider provides access to Network data.
 type NetworkProvider interface {
-	Network(network string) *Network
+	Network(network string) Network
 }
 
 // Instance provides access to configuration of an individual instance.
 type Instance struct {
+	ID string
 	ConfigProvider
 }
 
 // Network provides access to configuration, type, host, and device attributes
 // of a particular network. It also provides an interface for lease management.
 type Network struct {
+	ID string
 	ConfigProvider
 	Type   TypeProvider
 	Device DeviceProvider
