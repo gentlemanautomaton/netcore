@@ -18,6 +18,7 @@ type Service struct {
 	cfg      Config
 	p        Provider
 	cache    *dnscache.Cache
+	started  chan bool
 	done     chan Completion
 }
 
@@ -26,6 +27,7 @@ func NewService(p Provider, instance string) *Service {
 	s := &Service{
 		instance: instance,
 		p:        p,
+		started:  make(chan bool, 1),
 		done:     make(chan Completion, 1),
 	}
 
@@ -36,7 +38,8 @@ func NewService(p Provider, instance string) *Service {
 
 func (s *Service) init() {
 	if err := s.loadConfig(); err != nil {
-		s.exit(false, err)
+		s.signalStarted(false)
+		s.signalDone(false, err)
 		return
 	}
 
@@ -47,22 +50,31 @@ func (s *Service) init() {
 
 	dns.HandleFunc(".", func(w dns.ResponseWriter, req *dns.Msg) { s.dnsQueryServe(w, req) })
 
+	s.signalStarted(true)
+
+	once := makeOnce() // Avoid calling signalDone twice
+
 	go func() {
-		err := dns.ListenAndServe("0.0.0.0:53", "tcp", nil) // TODO: should use cfg to define the listening ip/port
-		s.exit(true, err)
+		err := dns.ListenAndServe(s.cfg.NetworkAddress(), "tcp", nil)
+		if _, ok := <-once; ok {
+			s.signalDone(true, err)
+		}
 	}()
 
 	go func() {
-		err := dns.ListenAndServe("0.0.0.0:53", "udp", nil) // TODO: should use cfg to define the listening ip/port
-		s.exit(true, err)
+		err := dns.ListenAndServe(s.cfg.NetworkAddress(), "udp", nil)
+		if _, ok := <-once; ok {
+			s.signalDone(true, err)
+		}
 	}()
 }
 
-func (s *Service) exit(initialized bool, err error) {
-	// FIXME: netdns spawns two service listeners, which means this can get called
-	//        twice, but the done channel is closed after the first call. This
-	//        could be fixed with a waitgroup if we only close the channel after
-	//        all members of the waitgroup have signaled.
+func (s *Service) signalStarted(success bool) {
+	s.started <- success
+	close(s.started)
+}
+
+func (s *Service) signalDone(initialized bool, err error) {
 	s.done <- Completion{false, err}
 	close(s.done)
 }
@@ -81,6 +93,13 @@ func (s *Service) loadConfig() error {
 	}
 	s.cfg = cfg
 	return nil
+}
+
+// Started returns a channel that will be signaled when the service has started
+// or failed to start. If the returned value is true the service started
+// succesfully.
+func (s *Service) Started() chan bool {
+	return s.started
 }
 
 // Done returns a channel that will be signaled when the service exits.

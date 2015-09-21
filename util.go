@@ -1,6 +1,7 @@
 package main
 
 import (
+	"log"
 	"os"
 	"os/exec"
 	"regexp"
@@ -33,4 +34,14 @@ func getHostname() (string, error) {
 
 func getUUID() string {
 	return uuid.New()
+}
+
+// logAfterSuccess will start a goroutine that will log.Print the given message
+// if a true value is received on the channel.
+func logAfterSuccess(c chan bool, message string) {
+	go func() {
+		if success := <-c; success {
+			log.Print(message)
+		}
+	}()
 }

@@ -33,27 +33,22 @@ func main() {
 	dhcpService := netdhcp.NewService(netdhcpetcd.NewProvider(etcdclient, netdhcp.DefaultConfig()), inst)
 	dnsService := netdns.NewService(netdnsetcd.NewProvider(etcdclient, netdns.DefaultConfig()), inst)
 
-	// TODO: Print NETCORE [SERVICE] STARTED for each service when they become
-	//       ready.
-	log.Println("NETCORE STARTED")
+	logAfterSuccess(dhcpService.Started(), "NETCORE DHCP STARTED")
+	logAfterSuccess(dnsService.Started(), "NETCORE DNS STARTED")
 
-	// TODO: Make sure this exits properly if neither service is enabled.
+	// FIXME: This will exit immediately if one of the services is disabled.
 	select {
-	case d, ok := <-dhcpService.Done():
-		if ok {
-			if d.Initialized {
-				log.Printf("NETCORE DHCP EXITED: %s\n", d.Err)
-				os.Exit(1)
-			}
-			log.Printf("NETCORE DHCP NOT STARTED: %s\n", d.Err)
+	case d := <-dhcpService.Done():
+		if d.Initialized {
+			log.Printf("NETCORE DHCP STOPPED: %s\n", d.Err)
+			os.Exit(1)
 		}
-	case d, ok := <-dnsService.Done():
-		if ok {
-			if d.Initialized {
-				log.Printf("NETCORE DHCP EXITED: %s\n", d.Err)
-				os.Exit(1)
-			}
-			log.Printf("NETCORE DNS NOT STARTED: %s\n", d.Err)
+		log.Printf("NETCORE DHCP DID NOT START: %s\n", d.Err)
+	case d := <-dnsService.Done():
+		if d.Initialized {
+			log.Printf("NETCORE DHCP STOPPED: %s\n", d.Err)
+			os.Exit(1)
 		}
+		log.Printf("NETCORE DNS DID NOT START: %s\n", d.Err)
 	}
 }

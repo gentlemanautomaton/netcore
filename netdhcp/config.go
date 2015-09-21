@@ -118,35 +118,35 @@ type config struct {
 	x Cfg
 }
 
-func (c config) Instance() string {
+func (c *config) Instance() string {
 	return c.x.Instance
 }
 
-func (c config) Enabled() bool {
+func (c *config) Enabled() bool {
 	return c.x.Enabled
 }
 
-func (c config) NIC() string {
+func (c *config) NIC() string {
 	return c.x.NIC
 }
 
-func (c config) IP() net.IP {
+func (c *config) IP() net.IP {
 	return c.x.IP
 }
 
-func (c config) Network() string {
+func (c *config) Network() string {
 	return c.x.Network
 }
 
-func (c config) Subnet() *net.IPNet {
+func (c *config) Subnet() *net.IPNet {
 	return c.x.Subnet
 }
 
-func (c config) Gateway() net.IP {
+func (c *config) Gateway() net.IP {
 	return c.x.IP
 }
 
-func (c config) Domain() string {
+func (c *config) Domain() string {
 	return c.x.Domain
 }
 

@@ -5,6 +5,7 @@ import "time"
 const (
 	netEnabled        = true
 	netDefaultTTL     = time.Hour * 3
+	netNetworkAddress = "0.0.0.0:53"
 	netMinimumTTL     = time.Second * 60
 	netCacheRetention = 0
 )
@@ -18,6 +19,7 @@ var (
 type Config interface {
 	Instance() string
 	Enabled() bool
+	NetworkAddress() string
 	DefaultTTL() time.Duration
 	MinimumTTL() time.Duration
 	CacheRetention() time.Duration
@@ -31,8 +33,9 @@ func NewConfig(c *Cfg) Config {
 
 // DefaultConfig returns a Config interface with the default values for netcore.
 func DefaultConfig() Config {
-	return config{Cfg{
+	return &config{Cfg{
 		Enabled:        netEnabled,
+		NetworkAddress: netNetworkAddress,
 		DefaultTTL:     netDefaultTTL,
 		MinimumTTL:     netMinimumTTL,
 		CacheRetention: netCacheRetention,
@@ -44,6 +47,7 @@ func DefaultConfig() Config {
 type Cfg struct {
 	Instance       string
 	Enabled        bool
+	NetworkAddress string
 	DefaultTTL     time.Duration
 	MinimumTTL     time.Duration
 	CacheRetention time.Duration
@@ -54,6 +58,7 @@ type Cfg struct {
 func (c Cfg) Copy() Cfg {
 	return Cfg{
 		Enabled:        c.Enabled,
+		NetworkAddress: c.NetworkAddress,
 		DefaultTTL:     c.DefaultTTL,
 		MinimumTTL:     c.MinimumTTL,
 		CacheRetention: c.CacheRetention,
@@ -66,6 +71,7 @@ func NewCfg(c Config) Cfg {
 	return Cfg{
 		Instance:       c.Instance(),
 		Enabled:        c.Enabled(),
+		NetworkAddress: c.NetworkAddress(),
 		DefaultTTL:     c.DefaultTTL(),
 		MinimumTTL:     c.MinimumTTL(),
 		CacheRetention: c.CacheRetention(),
@@ -86,28 +92,32 @@ type config struct {
 	x Cfg
 }
 
-func (c config) Instance() string {
+func (c *config) Instance() string {
 	return c.x.Instance
 }
 
-func (c config) Enabled() bool {
+func (c *config) Enabled() bool {
 	return c.x.Enabled
 }
 
+func (c *config) NetworkAddress() string {
+	return c.x.NetworkAddress
+}
+
 // DefaultTTL is the default TTL for all positive answers.
-func (c config) DefaultTTL() time.Duration {
+func (c *config) DefaultTTL() time.Duration {
 	return c.x.DefaultTTL
 }
 
 // MinimumTTL is the default value for the MINIMUM field in SOA records
 // indicating how long to cache negative answers.
-func (c config) MinimumTTL() time.Duration {
+func (c *config) MinimumTTL() time.Duration {
 	return c.x.MinimumTTL
 }
 
 // CacheRetention is the duration for which resource records are retained in the
 // DNS cache.
-func (c config) CacheRetention() time.Duration {
+func (c *config) CacheRetention() time.Duration {
 	return c.x.CacheRetention
 }
 
@@ -116,7 +126,7 @@ func (c config) CacheRetention() time.Duration {
 // be forwarded. If no forwarders are specified then the server will not forward
 // DNS queries. Forwarders are necessary to resolve CNAME and DNAME queries
 // for which this server is not authoritative.
-func (c config) Forwarders() []string {
+func (c *config) Forwarders() []string {
 	return append([]string(nil), c.x.Forwarders...) // Copy to avoid mutability
 }
 

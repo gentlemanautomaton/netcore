@@ -15,6 +15,7 @@ type Service struct {
 	instance string
 	cfg      Config
 	p        Provider
+	started  chan bool
 	done     chan Completion
 }
 
@@ -23,6 +24,7 @@ func NewService(p Provider, instance string) *Service {
 	s := &Service{
 		instance: instance,
 		p:        p,
+		started:  make(chan bool, 1),
 		done:     make(chan Completion, 1),
 	}
 
@@ -33,14 +35,21 @@ func NewService(p Provider, instance string) *Service {
 
 func (s *Service) init() {
 	if err := s.loadConfig(); err != nil {
-		s.exit(false, err)
+		s.signalStarted(false)
+		s.signalDone(false, err)
 		return
 	}
+	s.signalStarted(true)
 	err := dhcp4.ListenAndServeIf(s.cfg.NIC(), s)
-	s.exit(true, err)
+	s.signalDone(true, err)
 }
 
-func (s *Service) exit(initialized bool, err error) {
+func (s *Service) signalStarted(success bool) {
+	s.started <- success
+	close(s.started)
+}
+
+func (s *Service) signalDone(initialized bool, err error) {
 	s.done <- Completion{false, err}
 	close(s.done)
 }
@@ -59,6 +68,13 @@ func (s *Service) loadConfig() error {
 	}
 	s.cfg = cfg
 	return nil
+}
+
+// Started returns a channel that will be signaled when the service has started
+// or failed to start. If the returned value is true the service started
+// succesfully.
+func (s *Service) Started() chan bool {
+	return s.started
 }
 
 // Done returns a channel that will be signaled when the service exits.
