@@ -36,19 +36,29 @@ func main() {
 	logAfterSuccess(dhcpService.Started(), "NETCORE DHCP STARTED")
 	logAfterSuccess(dnsService.Started(), "NETCORE DNS STARTED")
 
-	// FIXME: This will exit immediately if one of the services is disabled.
-	select {
-	case d := <-dhcpService.Done():
-		if d.Initialized {
-			log.Printf("NETCORE DHCP STOPPED: %s\n", d.Err)
-			os.Exit(1)
+	dhcpDone := dhcpService.Done()
+	dnsDone := dnsService.Done()
+
+	for running := 2; running > 0; running-- {
+		select {
+		case d := <-dhcpDone:
+			if d.Initialized {
+				log.Printf("NETCORE DHCP STOPPED: %s\n", d.Err)
+				os.Exit(1) // FIXME: Attempt graceful shutdown first?
+			}
+			dhcpDone = nil // Read from each channel once
+			log.Printf("NETCORE DHCP DID NOT START: %s\n", d.Err)
+			// FIXME: Evaluate the reason why the service couldn't start and take
+			//        appropriate action.
+		case d := <-dnsDone:
+			if d.Initialized {
+				log.Printf("NETCORE DHCP STOPPED: %s\n", d.Err)
+				os.Exit(1) // FIXME: Attempt graceful shutdown first?
+			}
+			dnsDone = nil // Read from each channel once
+			log.Printf("NETCORE DNS DID NOT START: %s\n", d.Err)
+			// FIXME: Evaluate the reason why the service couldn't start and take
+			//        appropriate action.
 		}
-		log.Printf("NETCORE DHCP DID NOT START: %s\n", d.Err)
-	case d := <-dnsService.Done():
-		if d.Initialized {
-			log.Printf("NETCORE DHCP STOPPED: %s\n", d.Err)
-			os.Exit(1)
-		}
-		log.Printf("NETCORE DNS DID NOT START: %s\n", d.Err)
 	}
 }
