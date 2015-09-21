@@ -2,17 +2,14 @@ package netdns
 
 import "time"
 
-const (
-	netEnabled        = true
-	netDefaultTTL     = time.Hour * 3
-	netNetworkAddress = "0.0.0.0:53"
-	netMinimumTTL     = time.Second * 60
-	netCacheRetention = 0
-)
-
-var (
-	netForwarders = []string{"8.8.8.8:53", "8.8.4.4:53"} // default uses Google's Public DNS servers
-)
+var defaultConfig = Cfg{
+	Enabled:        true,
+	NetworkAddress: "0.0.0.0:53",
+	DefaultTTL:     time.Hour * 3,
+	MinimumTTL:     time.Second * 60,
+	CacheRetention: 0,
+	Forwarders:     []string{"8.8.8.8:53", "8.8.4.4:53"}, // default uses Google's Public DNS servers
+}
 
 // Config provides all of the necessary configuration context for the operation
 // of a netcore DNS instance.
@@ -33,13 +30,7 @@ func NewConfig(c *Cfg) Config {
 
 // DefaultConfig returns a Config interface with the default values for netcore.
 func DefaultConfig() Config {
-	return &config{Cfg{
-		Enabled:        netEnabled,
-		NetworkAddress: netNetworkAddress,
-		DefaultTTL:     netDefaultTTL,
-		MinimumTTL:     netMinimumTTL,
-		CacheRetention: netCacheRetention,
-	}}
+	return &config{defaultConfig.Copy()}
 }
 
 // Cfg provides a mutable implementation of the Config interface. It can be made

@@ -7,6 +7,21 @@ import (
 	"github.com/krolaw/dhcp4"
 )
 
+var defaultConfig = Cfg{
+	Enabled:       true,
+	NIC:           "eth0", // FIXME: Is it safe to have a default at all for this?
+	IP:            nil,
+	Network:       "",
+	Subnet:        nil,
+	Gateway:       nil,
+	Domain:        "",
+	TFTP:          "",
+	NTP:           nil,
+	LeaseDuration: time.Minute * 60, // TODO: Look for guidance on what this should be
+	GuestPool:     nil,              // TODO: Consider specifying a default pool
+	Options:       nil,              // FIXME: Make sure a nil map doesn't screw anything up
+}
+
 const minimumLeaseDuration = 60 * time.Second // FIXME: put this in a config
 
 // Config provides all of the necessary configuration context for the operation
@@ -35,9 +50,7 @@ func NewConfig(c *Cfg) Config {
 
 // DefaultConfig returns a Config interface with the default values for netcore.
 func DefaultConfig() Config {
-	return &config{Cfg{
-	// TODO: Create these!
-	}}
+	return &config{defaultConfig.Copy()}
 }
 
 // Cfg provides a mutable implementation of the Config interface. It can be made
