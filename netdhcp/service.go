@@ -100,6 +100,7 @@ func (s *Service) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, reqO
 		// Look up the MAC entry with cascaded attributes
 		lease, found, err := s.p.MAC(mac, true)
 		if err != nil {
+			// FIXME: Log error?
 			return nil
 		}
 

@@ -56,3 +56,20 @@ type MACEntry struct {
 	Duration time.Duration
 	Attr     map[string]string
 }
+
+// Lease represents a DHCP lease.
+type Lease struct {
+	MAC        net.HardwareAddr
+	Expiration time.Time
+}
+
+type Type struct {
+}
+
+type Device struct {
+	Name  string
+	Alias []string
+}
+
+type MAC struct {
+}
