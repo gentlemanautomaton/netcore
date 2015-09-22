@@ -52,7 +52,7 @@ func main() {
 			//        appropriate action.
 		case d := <-dnsDone:
 			if d.Initialized {
-				log.Printf("NETCORE DHCP STOPPED: %s\n", d.Err)
+				log.Printf("NETCORE DNS STOPPED: %s\n", d.Err)
 				os.Exit(1) // FIXME: Attempt graceful shutdown first?
 			}
 			dnsDone = nil // Read from each channel once
