@@ -47,15 +47,15 @@ type Network struct {
 	ConfigProvider
 	Type   TypeProvider
 	Device DeviceProvider
-	MAC    MACProvider
 	Lease  LeaseProvider
+	MAC    MACProvider
 }
 
 // ConfigProvider provides DHCP configuration at global, network and instance
 // levels.
 type ConfigProvider interface {
 	Init() error
-	Config() (Config, error)
+	Config() (Config, error) // TODO: Add ctx?
 }
 
 // TypeProvider provides access to type data.
@@ -71,7 +71,7 @@ type DeviceProvider interface {
 // MACProvider provides access to MAC data.
 type MACProvider interface {
 	Lookup(ctx context.Context, addr net.HardwareAddr) (MAC, bool, error)
-	Assign(ctx context.Context, addr net.HardwareAddr, ip net.IP) (bool, error)
+	Assign(ctx context.Context, addr net.HardwareAddr, t IPType, ip net.IP, priority int) (bool, error)
 }
 
 // LeaseProvider provides access to lease data.

@@ -66,14 +66,75 @@ type Lease struct {
 	Expiration time.Time
 }
 
-type Type struct {
+// Attr represents a set of common attributes for a MAC.
+type Attr struct {
+	TFTP string
+	// TODO: Adds boatloads of DHCP options
 }
 
+// Type reprsents a kind of device
+type Type struct {
+	TFTP string
+}
+
+// Device represents a single logical device on the network, which may have
+// one or more MAC addresses associated with it.
 type Device struct {
 	Name  string
 	Alias []string
 }
 
+// MAC represents the data associated with a specific MAC.
 type MAC struct {
-	MAC string
+	Attr
+	Addr   net.HardwareAddr
+	Device string // FIXME: What type are we using for device IDs?
+	Type   string
+	Mode   IPType
+	Res    []IP
+	Dyn    []IP
+}
+
+// HasMode returns true if the given IP type is enabled for this MAC.
+func (m *MAC) HasMode(mode IPType) bool {
+	return m.Mode&IPType != 0
+}
+
+// Prefix describes a MAC prefix and associates it with a type.
+type Prefix struct {
+	Attr
+	Addr  net.HardwareAddr
+	Label string
+	Type  string
+}
+
+// IPType represents whether an IP address has been dynamically assigned to a
+// MAC or has been manually reserved for it. When determining which lease to
+// provide to a MAC, reservations always have first priority.
+type IPType uint8
+
+const (
+	// Dynamic IP addresses are assigned automatically from an IP pool.
+	Dynamic IPType = 1 << iota
+	// Reserved IP addresses are manually assigned to a specific MAC.
+	Reserved
+)
+
+func (t IPType) String() {
+	switch t {
+	case Dynamic:
+		return "dyn"
+	case Reservation:
+		return "res"
+	default:
+		return ""
+	}
+}
+
+// IP represents an IP address assigned to a MAC address.
+type IP struct {
+	Creation   time.Time
+	Assignment time.Time
+	Priority   int
+	IP         net.IP
 }

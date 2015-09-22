@@ -87,6 +87,8 @@ func (s *Service) loadConfig(instance string) error {
 		return err
 	}
 
+	// TODO: Consider some sort of sychronization primitive here. Right now this
+	//       won't withstand change once multithreaded access has started.
 	s.inst = inst
 	s.net = netwrk
 	s.cfg = cfg
@@ -112,21 +114,23 @@ func (s *Service) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, reqO
 	case dhcp4.Discover:
 		// RFC 2131 4.3.1
 		// FIXME: send to StatHat and/or increment a counter
-		mac := packet.CHAddr()
+		addr := packet.CHAddr()
 
 		// Check MAC blacklist
-		if !s.isMACPermitted(mac) {
-			log.Printf("DHCP Discover from %s\n is not permitted", mac.String())
+		if !s.isMACPermitted(addr) {
+			log.Printf("DHCP Discover from %s\n is not permitted", addr.String())
 			return nil
 		}
-		log.Printf("DHCP Discover from %s\n", mac.String())
+		log.Printf("DHCP Discover from %s\n", addr.String())
 
 		// FIXME: Look up the MAC entry with cascaded attributes?
-		data, found, err := s.net.MAC.Lookup(context.Background(), mac)
+		data, found, err := s.net.MAC.Lookup(context.Background(), addr)
 		if err != nil {
 			// FIXME: Log error?
 			return nil
 		}
+
+		prefixes := macPrefixes
 
 		// TODO: Enumerate all reservations and previous dynamic allocations and
 		//       select the most appropriate lease based on the following algorithm:
