@@ -71,12 +71,12 @@ type DeviceProvider interface {
 // MACProvider provides access to MAC data.
 type MACProvider interface {
 	Lookup(ctx context.Context, addr net.HardwareAddr) (MAC, bool, error)
-	Assign(ctx context.Context, addr net.HardwareAddr, t IPType, ip net.IP, priority int) (bool, error)
+	Assign(ctx context.Context, addr net.HardwareAddr, mode Mode, ip net.IP, priority int) (bool, error)
 }
 
 // LeaseProvider provides access to lease data.
 type LeaseProvider interface {
-	Lookup(ctx context.Context, ip net.IP) (Lease, bool, error)
+	Lookup(ctx context.Context, ip net.IP) (*Lease, bool, error)
 	Create(ctx context.Context, ip net.IP, mac net.HardwareAddr, expiration time.Time) (bool, error)
 	Renew(ctx context.Context, ip net.IP, mac net.HardwareAddr, expiration time.Time) (bool, error)
 	Release(ctx context.Context, ip net.IP, mac net.HardwareAddr) (bool, error)

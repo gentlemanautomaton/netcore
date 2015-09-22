@@ -1,9 +1,11 @@
 package netdhcp
 
 import (
+	"bytes"
 	"encoding/binary"
 	"log"
 	"net"
+	"sort"
 	"strings"
 	"time"
 
@@ -130,20 +132,21 @@ func (s *Service) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, reqO
 			return nil
 		}
 
-		prefixes := macPrefixes
+		ip, err := s.selectIP(context.Background(), data.IP, addr)
+		if err != nil {
+			// FIXME: Log error?
+			return nil
+		}
 
-		// TODO: Enumerate all reservations and previous dynamic allocations and
-		//       select the most appropriate lease based on the following algorithm:
-		// 1. Reservation with active lease matching this MAC, most recent first
-		// 2. Reservation without any active lease, most recent first
-		// 3. Dynamic Allocation with active lease matching this MAC, most recent first
-		// 4. Dynamic Allocation without any active lease, most recent first
-		// 5. New Dynamic Allocation from pool
+		prefixes := macPrefixes
+		for _, prefix := range macPrefixes(addr) {
+
+		}
 
 		// Existing Lease
 		if found {
 			options := s.getOptionsFromMAC(data)
-			log.Printf("DHCP Discover from %s (we offer %s from current lease)\n", mac.String(), lease.IP.String())
+			log.Printf("DHCP Discover from %s (we offer %s from current lease)\n", addr.String(), lease.IP.String())
 			// for x, y := range reqOptions {
 			// 	log.Printf("\tR[%v] %v %s\n", x, y, y)
 			// }
@@ -293,6 +296,58 @@ func (s *Service) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, reqO
 func (s *Service) isMACPermitted(mac net.HardwareAddr) bool {
 	// TODO: determine whether or not this MAC should be permitted to get an IP at all (blacklist? whitelist?)
 	return true
+}
+
+func (s *Service) selectIP(ctx context.Context, ipset []*IP, target net.HardwareAddr) (*IP, *Lease, error) {
+	// Enumerate all reservations and dynamic allocations and select the most
+	// appropriate lease based on the following algorithm:
+	// 1. Reservation with active lease matching this MAC, sorted by priority and then by recency
+	// 2. Reservation without any active lease, sorted by priority and then by recency
+	// 3. Dynamic Allocation with active lease matching this MAC, sorted by priority and then by recency
+	// 4. Dynamic Allocation without any active lease, sorted by priority and then by recency
+	// 5. New Dynamic Allocation from pool
+
+	// TODO: Consider whether we should always give the lease of highest priority
+	//       regardless of whatever the current lease is.
+
+	type result struct {
+		IP    *IP
+		Lease *Lease
+		Found bool
+		Err   error
+	}
+
+	if len(ipset) == 0 {
+		return nil, nil, nil
+	}
+
+	sort.Sort(IPSet(ipset))
+
+	// Issue a lease lookup for each potential IP address in parallel
+	queries := make([]chan result, 0, len(ipset))
+	for _, ip := range ipset {
+		// FIXME: Make sure the ip address is within this network
+		ch := make(chan leaseLookup)
+		queries = append(queries, ch)
+		go func(ip *IP) {
+			lease, found, err := s.net.Lease.Lookup(ctx, ip.Address)
+			ch <- result{lease, found, err}
+		}(ip)
+	}
+
+	// Process each ip and it's resulting lease lookup in preferential order
+	for _, result := range queries {
+		if result.Err != nil {
+			return nil, result.Err
+		}
+		if result.Found {
+			if bytes.Equal(result.Lease.MAC, target) {
+				return ipset[i], result.Lease, nil
+			}
+		}
+		return result.IP, nil, nil
+	}
+	return nil, nil, nil
 }
 
 func (s *Service) getRequestState(packet dhcp4.Packet, reqOptions dhcp4.Options) (string, net.IP) {

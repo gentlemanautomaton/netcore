@@ -87,18 +87,19 @@ type Device struct {
 // MAC represents the data associated with a specific MAC.
 type MAC struct {
 	Attr
-	Addr   net.HardwareAddr
-	Device string // FIXME: What type are we using for device IDs?
-	Type   string
-	Mode   IPType
-	Res    []IP
-	Dyn    []IP
+	Addr        net.HardwareAddr
+	Device      string // FIXME: What type are we using for device IDs?
+	Type        string
+	Restriction Mode // TODO: Decide whether this is inclusive or exclusive
+	IP          []*IP
 }
 
 // HasMode returns true if the given IP type is enabled for this MAC.
+/*
 func (m *MAC) HasMode(mode IPType) bool {
 	return m.Mode&IPType != 0
 }
+*/
 
 // Prefix describes a MAC prefix and associates it with a type.
 type Prefix struct {
@@ -108,23 +109,23 @@ type Prefix struct {
 	Type  string
 }
 
-// IPType represents whether an IP address has been dynamically assigned to a
+// Mode represents whether an IP address has been dynamically assigned to a
 // MAC or has been manually reserved for it. When determining which lease to
 // provide to a MAC, reservations always have first priority.
-type IPType uint8
+type Mode uint8
 
 const (
 	// Dynamic IP addresses are assigned automatically from an IP pool.
-	Dynamic IPType = 1 << iota
+	Dynamic Mode = 1 << iota
 	// Reserved IP addresses are manually assigned to a specific MAC.
 	Reserved
 )
 
-func (t IPType) String() {
-	switch t {
+func (mode Mode) String() {
+	switch mode {
 	case Dynamic:
 		return "dyn"
-	case Reservation:
+	case Reserved:
 		return "res"
 	default:
 		return ""
@@ -133,8 +134,44 @@ func (t IPType) String() {
 
 // IP represents an IP address assigned to a MAC address.
 type IP struct {
+	Mode       Mode
+	Priority   int
 	Creation   time.Time
 	Assignment time.Time
-	Priority   int
-	IP         net.IP
+	Address    net.IP
+}
+
+// IPSet represents a set of IP addreses that can be sorted according to the
+// address selection rules.
+type IPSet []*IP
+
+func (slice IPSet) Len() int {
+	return len(slice)
+}
+
+func (slice IPSet) Less(i, j int) bool {
+	a, b := slice[i], slice[j]
+	if a.Mode < b.Mode {
+		return true
+	}
+	if a.Mode > b.Mode {
+		return false
+	}
+	if a.Priority < b.Priority {
+		return true
+	}
+	if a.Priority > b.Priority {
+		return false
+	}
+	if a.Assignment < b.Assignment {
+		return true
+	}
+	if a.Assignment > b.Assignment {
+		return false
+	}
+	return false
+}
+
+func (slice IPSet) Swap(i, j int) {
+	slice[i], slice[j] = slice[j], slice[i]
 }
