@@ -44,6 +44,12 @@ type Completion struct {
 	Err error
 }
 
+// Instance represents an instance of the DHCP service and includes its
+// configuration.
+type Instance struct {
+	Attr
+}
+
 // IPEntry represents an IP address allocation retrieved from the underlying
 // provider.
 type IPEntry struct {
@@ -72,7 +78,7 @@ type Attr struct {
 	// TODO: Adds boatloads of DHCP options
 }
 
-// Type reprsents a kind of device
+// Type reprsents a kind of device.
 type Type struct {
 	TFTP string
 }
@@ -82,6 +88,8 @@ type Type struct {
 type Device struct {
 	Name  string
 	Alias []string
+	Type  string
+	Addr  []net.HardwareAddr
 }
 
 // MAC represents the data associated with a specific MAC.

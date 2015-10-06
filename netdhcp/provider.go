@@ -7,13 +7,40 @@ import (
 	"golang.org/x/net/context"
 )
 
+// Provider carries all storage interfaces necessary for operation of
+// the DHCP service.
+/*
+type Provider struct {
+	ConfigProvider
+	DeviceProvider
+	LeaseProvider
+	InstanceProvider
+	NetworkProvider
+	TypeProvider
+}
+*/
+
+// Provider carries all storage interfaces necessary for operation of
+// the DHCP service.
+type Provider struct {
+	TypeProvider
+	DeviceProvider
+	MACProvider
+	NetworkTypeProvider
+	NetworkDeviceProvider
+	NetworkMACProvider
+	LeaseProvider
+}
+
 // Provider implements all storage interfaces necessary for operation of
 // the DHCP service.
+/*
 type Provider struct {
 	Global
 	InstanceProvider
 	NetworkProvider
 }
+*/
 
 // Global provides access to configuration, type, host, and MAC attributes
 // shared across all networks.
@@ -26,29 +53,13 @@ type Global struct {
 
 // InstanceProvider provides access to Instance data.
 type InstanceProvider interface {
-	Instance(instance string) Instance
+	Instance(ctx context.Context, id string) (Instance, error) // TODO: Add ctx?
 }
 
 // NetworkProvider provides access to Network data.
 type NetworkProvider interface {
-	Network(network string) Network
-}
-
-// Instance provides access to configuration of an individual instance.
-type Instance struct {
-	ID string
 	ConfigProvider
-}
-
-// Network provides access to configuration, type, host, and device attributes
-// of a particular network. It also provides an interface for lease management.
-type Network struct {
-	ID string
-	ConfigProvider
-	Type   TypeProvider
-	Device DeviceProvider
-	Lease  LeaseProvider
-	MAC    MACProvider
+	//LookupNetworkType
 }
 
 // ConfigProvider provides DHCP configuration at global, network and instance
@@ -60,26 +71,42 @@ type ConfigProvider interface {
 
 // TypeProvider provides access to type data.
 type TypeProvider interface {
-	Lookup(ctx context.Context, id string) (Type, bool, error)
+	Type(ctx context.Context, id string) (Type, bool, error)
 }
 
-// DeviceProvider provides access to device data.
+// NetworkTypeProvider provides access to type data for a particular network.
+type NetworkTypeProvider interface {
+	NetworkType(ctx context.Context, network string, id string) (Type, bool, error)
+}
+
+// DeviceProvider provides access to global device data.
 type DeviceProvider interface {
-	Lookup(ctx context.Context, id string) (Device, bool, error)
+	Device(ctx context.Context, device string) (Device, bool, error)
+}
+
+// NetworkDeviceProvider provides access to device data for a particular
+// network.
+type NetworkDeviceProvider interface {
+	NetworkDevice(ctx context.Context, network string, device string) (Device, bool, error)
 }
 
 // MACProvider provides access to MAC data.
 type MACProvider interface {
-	Lookup(ctx context.Context, addr net.HardwareAddr) (MAC, bool, error)
-	Assign(ctx context.Context, addr net.HardwareAddr, mode Mode, ip net.IP, priority int) (bool, error)
+	MAC(ctx context.Context, addr net.HardwareAddr) (MAC, bool, error)
+}
+
+// NetworkMACProvider provides access to MAC data for a particular network.
+type NetworkMACProvider interface {
+	NetworkMAC(ctx context.Context, addr net.HardwareAddr) (MAC, bool, error)
+	NetworkMACAssign(ctx context.Context, addr net.HardwareAddr, mode Mode, ip net.IP, priority int) (bool, error)
 }
 
 // LeaseProvider provides access to lease data.
 type LeaseProvider interface {
-	Lookup(ctx context.Context, ip net.IP) (*Lease, bool, error)
-	Create(ctx context.Context, ip net.IP, mac net.HardwareAddr, expiration time.Time) (bool, error)
-	Renew(ctx context.Context, ip net.IP, mac net.HardwareAddr, expiration time.Time) (bool, error)
-	Release(ctx context.Context, ip net.IP, mac net.HardwareAddr) (bool, error)
+	LeaseLookup(ctx context.Context, ip net.IP) (*Lease, bool, error)
+	LeaseCreate(ctx context.Context, ip net.IP, mac net.HardwareAddr, expiration time.Time) (bool, error)
+	LeaseRenew(ctx context.Context, ip net.IP, mac net.HardwareAddr, expiration time.Time) (bool, error)
+	LeaseRelease(ctx context.Context, ip net.IP, mac net.HardwareAddr) (bool, error)
 }
 
 /*

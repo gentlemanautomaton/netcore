@@ -132,13 +132,12 @@ func (s *Service) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, reqO
 			return nil
 		}
 
-		ip, err := s.selectIP(context.Background(), data.IP, addr)
+		ip, lease, err := s.selectIP(context.Background(), data.IP, addr)
 		if err != nil {
 			// FIXME: Log error?
 			return nil
 		}
 
-		prefixes := macPrefixes
 		for _, prefix := range macPrefixes(addr) {
 
 		}
@@ -296,6 +295,10 @@ func (s *Service) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, reqO
 func (s *Service) isMACPermitted(mac net.HardwareAddr) bool {
 	// TODO: determine whether or not this MAC should be permitted to get an IP at all (blacklist? whitelist?)
 	return true
+}
+
+func (s *Servce) pepareLease(target net.HardwareAddr) {
+
 }
 
 func (s *Service) selectIP(ctx context.Context, ipset []*IP, target net.HardwareAddr) (*IP, *Lease, error) {
