@@ -44,10 +44,24 @@ type Completion struct {
 	Err error
 }
 
+// Global represents configuration that is shared by all instances of the DHCP
+// service.
+type Global struct {
+	Attr
+}
+
 // Instance represents an instance of the DHCP service and includes its
 // configuration.
 type Instance struct {
 	Attr
+	ID      string
+	Network string
+}
+
+// Network represents a DHCP network with common configuration.
+type Network struct {
+	Attr
+	ID string
 }
 
 // IPEntry represents an IP address allocation retrieved from the underlying
