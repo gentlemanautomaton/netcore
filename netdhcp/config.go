@@ -8,18 +8,20 @@ import (
 )
 
 var defaultConfig = Cfg{
-	Enabled:       true,
-	NIC:           "eth0", // FIXME: Is it safe to have a default at all for this?
-	IP:            nil,
-	Network:       "",
-	Subnet:        nil,
-	Gateway:       nil,
-	Domain:        "",
-	TFTP:          "",
-	NTP:           nil,
-	LeaseDuration: time.Minute * 60, // TODO: Look for guidance on what this should be
-	GuestPool:     nil,              // TODO: Consider specifying a default pool
-	Options:       nil,              // FIXME: Make sure a nil map doesn't screw anything up
+	Enabled: true,
+	NIC:     "eth0", // FIXME: Is it safe to have a default at all for this?
+	IP:      nil,
+	Network: "",
+	Subnet:  nil,
+	Attr: Attr{
+		Gateway:       nil,
+		Domain:        "",
+		TFTP:          "",
+		NTP:           nil,
+		LeaseDuration: time.Minute * 60, // TODO: Look for guidance on what this should be
+	},
+	GuestPool: nil, // TODO: Consider specifying a default pool
+	//Options:       nil,              // FIXME: Make sure a nil map doesn't screw anything up
 }
 
 const minimumLeaseDuration = 60 * time.Second // FIXME: put this in a config
@@ -56,56 +58,55 @@ func DefaultConfig() Config {
 // Cfg provides a mutable implementation of the Config interface. It can be made
 // into an immutable Config instance via the NewConfig function.
 type Cfg struct {
-	Instance      string
-	Enabled       bool
-	NIC           string
-	IP            net.IP
-	Network       string
-	Subnet        *net.IPNet
-	Gateway       net.IP
-	Domain        string
-	TFTP          string
-	NTP           net.IP
-	LeaseDuration time.Duration
-	GuestPool     *net.IPNet
-	Options       dhcp4.Options
+	Instance  string
+	Enabled   bool
+	NIC       string
+	IP        net.IP
+	Network   string
+	Subnet    *net.IPNet
+	GuestPool *net.IPNet
+	Attr
 }
 
 // NewCfg creates a mutable Cfg instance from the given Config interface.
 func NewCfg(c Config) Cfg {
 	return Cfg{
-		Instance:      c.Instance(),
-		Enabled:       c.Enabled(),
-		NIC:           c.NIC(),
-		IP:            c.IP(),
-		Network:       c.Network(),
-		Subnet:        c.Subnet(),
-		Gateway:       c.Gateway(),
-		Domain:        c.Domain(),
-		TFTP:          c.TFTP(),
-		NTP:           c.NTP(),
-		LeaseDuration: c.LeaseDuration(),
-		GuestPool:     c.GuestPool(),
-		Options:       c.Options(),
+		Instance:  c.Instance(),
+		Enabled:   c.Enabled(),
+		NIC:       c.NIC(),
+		IP:        c.IP(),
+		Network:   c.Network(),
+		Subnet:    c.Subnet(),
+		GuestPool: c.GuestPool(),
+		Attr: Attr{
+			Gateway:       c.Gateway(),
+			Domain:        c.Domain(),
+			TFTP:          c.TFTP(),
+			NTP:           c.NTP(),
+			LeaseDuration: c.LeaseDuration(),
+		},
+		//Options:       c.Options(),
 	}
 }
 
 // Copy will make a deep copy of the Cfg.
 func (c *Cfg) Copy() Cfg {
 	return Cfg{
-		Instance:      c.Instance,
-		Enabled:       c.Enabled,
-		NIC:           c.NIC,
-		IP:            c.IP,
-		Network:       c.Network,
-		Subnet:        c.Subnet,
-		Gateway:       c.Gateway,
-		Domain:        c.Domain,
-		TFTP:          c.TFTP,
-		NTP:           c.NTP,
-		LeaseDuration: c.LeaseDuration,
-		GuestPool:     c.GuestPool,
-		Options:       copyOptions(c.Options),
+		Instance:  c.Instance,
+		Enabled:   c.Enabled,
+		NIC:       c.NIC,
+		IP:        c.IP,
+		Network:   c.Network,
+		Subnet:    c.Subnet,
+		GuestPool: c.GuestPool,
+		Attr: Attr{
+			Gateway:       c.Gateway,
+			Domain:        c.Domain,
+			TFTP:          c.TFTP,
+			NTP:           c.NTP,
+			LeaseDuration: c.LeaseDuration,
+		},
+		//Options:       copyOptions(c.Options),
 	}
 }
 

@@ -4,6 +4,10 @@ import (
 	"errors"
 	"net"
 	"time"
+
+	"golang.org/x/net/context"
+
+	"github.com/krolaw/dhcp4"
 )
 
 var (
@@ -44,10 +48,18 @@ type Completion struct {
 	Err error
 }
 
+type WatcherOptions struct {
+}
+
 // Global represents configuration that is shared by all instances of the DHCP
 // service.
 type Global struct {
 	Attr
+	Network string
+}
+
+type GlobalWatcher interface {
+	Next(context.Context) (*Global, error)
 }
 
 // Instance represents an instance of the DHCP service and includes its
@@ -58,10 +70,25 @@ type Instance struct {
 	Network string
 }
 
+// TODO: Implement Config interface?
+/*
+func (i *Instance) Network() {
+
+}
+*/
+
+type InstanceWatcher interface {
+	Next(context.Context) (*Instance, error)
+}
+
 // Network represents a DHCP network with common configuration.
 type Network struct {
 	Attr
 	ID string
+}
+
+type NetworkWatcher interface {
+	Next(context.Context) (*Network, error)
 }
 
 // IPEntry represents an IP address allocation retrieved from the underlying
@@ -86,10 +113,19 @@ type Lease struct {
 	Expiration time.Time
 }
 
-// Attr represents a set of common attributes for a MAC.
+// Attr represents a set of attributes for a DHCP lease.
 type Attr struct {
-	TFTP string
+	Subnet        *net.IPNet
+	Gateway       net.IP
+	Domain        string
+	TFTP          string
+	NTP           net.IP
+	LeaseDuration time.Duration
+	Options       dhcp4.Options // TODO: Get rid of this and add a property for each option?
 	// TODO: Adds boatloads of DHCP options
+}
+
+type LeaseAttr struct {
 }
 
 // Type reprsents a kind of device.
@@ -114,6 +150,9 @@ type MAC struct {
 	Type        string
 	Restriction Mode // TODO: Decide whether this is inclusive or exclusive
 	IP          []*IP
+}
+
+type MACAttr struct {
 }
 
 // HasMode returns true if the given IP type is enabled for this MAC.

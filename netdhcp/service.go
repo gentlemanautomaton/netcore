@@ -3,10 +3,12 @@ package netdhcp
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"log"
 	"net"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/net/context"
@@ -16,35 +18,33 @@ import (
 
 // Service provides netcore DHCP services.
 type Service struct {
-	prov    Provider
-	inst    Instance
-	net     Network
-	cfg     Config
+	m       sync.RWMutex // guards access to v
+	v       *service     // current view of the service, protected by m
 	started chan bool
 	done    chan Completion
 }
 
-// NewService creates a new netcore DHCP service.
+// NewService creates a new netcore DHCP service with the given data provider
+// service instance ID.
 func NewService(provider Provider, instance string) *Service {
 	s := &Service{
-		prov:    provider,
 		started: make(chan bool, 1),
 		done:    make(chan Completion, 1),
 	}
 
-	go s.init(instance)
+	go s.init(provider, instance)
 
 	return s
 }
 
-func (s *Service) init(instance string) {
-	if err := s.loadConfig(instance); err != nil {
+func (s *Service) init(p Provider, id string) {
+	if err := s.load(p, id); err != nil {
 		s.signalStarted(false)
 		s.signalDone(false, err)
 		return
 	}
 	s.signalStarted(true)
-	err := dhcp4.ListenAndServeIf(s.cfg.NIC(), s)
+	err := dhcp4.ListenAndServeIf(s.view().cfg.NIC(), s)
 	s.signalDone(true, err)
 }
 
@@ -58,44 +58,114 @@ func (s *Service) signalDone(initialized bool, err error) {
 	close(s.done)
 }
 
-func (s *Service) loadConfig(instance string) error {
-	gc, err := s.prov.Config()
+func (s *Service) load(p Provider, id string) error {
+	if id == "" {
+		return errors.New("No instance identifier")
+	}
+
+	if p.GlobalProvider == nil {
+		return errors.New("No global provider")
+	}
+	if p.NetworkProvider == nil {
+		return errors.New("No network provider")
+	}
+	if p.InstanceProvider == nil {
+		return errors.New("No instance provider")
+	}
+	// FIXME: Check for all required provider interfaces
+
+	// TODO: Create watcher for each component and reload when configuration changes.
+
+	global := NewContext(p)
+	instance := global.Instance(id)
+
+	ctx := context.Background() // FIXME: Use a real cancellable context
+
+	globalData, err := global.Read(ctx)
 	if err != nil {
 		return err
 	}
 
-	inst := s.prov.Instance(instance)
-	ic, err := inst.Config()
+	instanceData, err := instance.Read(ctx)
 	if err != nil {
 		return err
 	}
 
-	network := ic.Network()
-	if network == "" {
-		network = gc.Network()
-		if network == "" {
+	netID := instanceData.Network
+	if netID == "" {
+		netID = globalData.Network
+		if netID == "" {
 			return ErrNoConfigNetwork
 		}
 	}
 
-	netwrk := s.prov.Network(network)
-	nc, err := netwrk.Config()
+	network := global.Network(netID)
+	networkData, err := network.Read(ctx)
 	if err != nil {
 		return err
 	}
 
-	cfg := Merge(gc, ic, nc)
+	cfg := Merge(globalData, instanceData, networkData) // TODO: Review order
 	if err := Validate(cfg); err != nil {
 		return err
 	}
 
-	// TODO: Consider some sort of sychronization primitive here. Right now this
-	//       won't withstand change once multithreaded access has started.
-	s.inst = inst
-	s.net = netwrk
-	s.cfg = cfg
+	srv := &service{
+		id:       id,
+		global:   global,
+		instance: instance,
+		network:  network,
+		cfg:      cfg,
+	}
+
+	s.m.Lock()
+	defer s.m.Unlock()
+
+	s.v = srv
+
+	//s.inst = inst
+	//s.net = netwrk
 
 	return nil
+}
+
+// view returns a consistent view of the service.
+func (s *Service) view() *service {
+	s.m.RLock()
+	defer s.m.RUnlock()
+	return s.v
+}
+
+func (s *Service) run() {
+	// TODO: Figure this out
+	for {
+		v := s.view()
+		opt := WatcherOptions{}
+		gw := v.global.Watcher(opt)
+		iw := v.instance.Watcher(opt)
+		nw := v.network.Watcher(opt)
+		ctx := context.Background()
+		var gs, is, ns chan struct{} // Signals
+		go func() {
+			gw.Next(ctx)
+			gs <- struct{}{}
+		}()
+		go func() {
+			iw.Next(ctx)
+			is <- struct{}{}
+		}()
+		go func() {
+			nw.Next(ctx)
+			ns <- struct{}{}
+		}()
+		select {
+		case <-gs:
+		case <-is:
+		case <-ns:
+		}
+		// TODO: Signal the ctx?
+		// TODO: Reload
+	}
 }
 
 // Started returns a channel that will be signaled when the service has started
@@ -112,6 +182,26 @@ func (s *Service) Done() chan Completion {
 
 // ServeDHCP is called by dhcp4.ListenAndServe when the service is started
 func (s *Service) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, reqOptions dhcp4.Options) (response dhcp4.Packet) {
+}
+
+type cache struct {
+	global   Global
+	instance Instance
+	network  Network
+}
+
+// service operates within a consistent cached view of global, instance and
+// network configuration.
+type service struct {
+	id       string
+	global   GlobalContext
+	instance InstanceContext
+	network  NetworkContext
+	cfg      Config
+	//cache    cache
+}
+
+func (s *service) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, reqOptions dhcp4.Options) (response dhcp4.Packet) {
 	switch msgType {
 	case dhcp4.Discover:
 		// RFC 2131 4.3.1
@@ -297,7 +387,7 @@ func (s *Service) isMACPermitted(mac net.HardwareAddr) bool {
 	return true
 }
 
-func (s *Servce) pepareLease(target net.HardwareAddr) {
+func (s *Service) pepareLease(target net.HardwareAddr) {
 
 }
 

@@ -67,16 +67,19 @@ type ConfigProvider interface {
 // GlobalProvider provides access to global configuration data.
 type GlobalProvider interface {
 	Global(ctx context.Context) (Global, error)
+	GlobalWatcher(opt WatcherOptions) GlobalWatcher // TODO: Consider moving this into its own interface
 }
 
 // InstanceProvider provides access to instance configuration data.
 type InstanceProvider interface {
 	Instance(ctx context.Context, id string) (Instance, error)
+	InstanceWatcher(id string, opt WatcherOptions) InstanceWatcher // TODO: Consider moving this into its own interface
 }
 
 // NetworkProvider provides access to Network data.
 type NetworkProvider interface {
 	Network(ctx context.Context, id string) (Network, error)
+	NetworkWatcher(id string, opt WatcherOptions) NetworkWatcher // TODO: Consider moving this into its own interface
 }
 
 // TypeProvider provides access to type data.

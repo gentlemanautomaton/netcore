@@ -54,14 +54,20 @@ type GlobalContext struct {
 	p Provider
 }
 
-// Context returns a context for the given provider.
-func Context(p Provider) *GlobalContext {
+// NewContext returns a context for the given provider.
+func NewContext(p Provider) *GlobalContext {
 	return &GlobalContext{p}
 }
 
 // Read returns a copy of the global configuration.
 func (gc *GlobalContext) Read(ctx context.Context) (Global, error) {
 	return gc.p.Global(ctx)
+}
+
+// Watcher returns a GlobalWatcher that provides notification of global
+// configuration changes.
+func (gc *GlobalContext) Watcher(opt WatcherOptions) GlobalWatcher {
+	return gc.p.GlobalWatcher(opt)
 }
 
 // Instance returns a context for the given instance id.
@@ -101,6 +107,13 @@ func (ic *InstanceContext) Read(ctx context.Context) (Instance, error) {
 	return ic.p.Instance(ctx, ic.id)
 }
 
+// Watcher returns an InstanceWatcher that provides notification of instance
+// configuration changes.
+func (ic *InstanceContext) Watcher(opt WatcherOptions) InstanceWatcher {
+	// FIXME: When do we check validity of ic?
+	return ic.p.InstanceWatcher(ic.id, opt)
+}
+
 // NetworkContext provides access to configuration, type, host, and device
 // attributes of a particular network. It also provides access to lease
 // management.
@@ -123,6 +136,13 @@ func (nc *NetworkContext) Read(ctx context.Context) (Network, error) {
 		return Network{}, err
 	}
 	return nc.p.Network(ctx, nc.id)
+}
+
+// Watcher returns a NetworkWatcher that provides notification of network
+// configuration changes.
+func (nc *NetworkContext) Watcher(opt WatcherOptions) NetworkWatcher {
+	// FIXME: When do we check validity of nc?
+	return nc.p.NetworkWatcher(nc.id, opt)
 }
 
 // Type returns a context for the given type id.
