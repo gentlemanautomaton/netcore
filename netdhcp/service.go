@@ -141,17 +141,12 @@ type params struct {
 	id string
 }
 
-func (s *Service) sync(chan params) {
-	// TODO: Figure this out
-	var (
-		gs       chan GlobalResult
-		is       chan InstanceResult
-		ns       chan NetworkResult
-		global   GlobalContext
-		instance InstanceContext
-		network  NetworkContext
-	)
-	ctx := context.Background()
+func watch(ctx context.Context, p Provider, id string, gs chan GlobalResult, is chan InstanceResult, ns chan NetworkResult) {
+	opt := WatcherOptions{}
+	global, instance, network := load(p, id)
+	gw := global.Watcher(opt)
+	iw := instance.Watcher(opt)
+	nw := network.Watcher(opt)
 	go func() {
 		g, err := gw.Next(ctx)
 		gs <- GlobalResult{g, err}
@@ -164,11 +159,36 @@ func (s *Service) sync(chan params) {
 		n, err := nw.Next(ctx)
 		ns <- NetworkResult{n, err}
 	}()
+}
+
+func (s *Service) sync(chan params) {
+	// TODO: Figure this out
+	var (
+		gs       chan GlobalResult
+		is       chan InstanceResult
+		ns       chan NetworkResult
+		global   GlobalContext
+		instance InstanceContext
+		network  NetworkContext
+	)
 	for {
 		select {
 		case input <- params:
 			global = NewContext(input.p)
 			instance = global.Instance(input.id)
+			wctx := context.Background()
+			go func() {
+				g, err := gw.Next(wctx)
+				gs <- GlobalResult{g, err}
+			}()
+			go func() {
+				i, err := iw.Next(wctx)
+				is <- InstanceResult{i, err}
+			}()
+			go func() {
+				n, err := nw.Next(wctx)
+				ns <- NetworkResult{n, err}
+			}()
 		case <-gs:
 		case <-is:
 		case <-ns:
