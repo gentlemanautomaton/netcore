@@ -136,15 +136,50 @@ func (s *Service) view() *service {
 	return s.v
 }
 
-func (s *Service) run() {
+type params struct {
+	p  Provider
+	id string
+}
+
+func (s *Service) sync(chan params) {
 	// TODO: Figure this out
+	var (
+		gs       chan GlobalResult
+		is       chan InstanceResult
+		ns       chan NetworkResult
+		global   GlobalContext
+		instance InstanceContext
+		network  NetworkContext
+	)
+	ctx := context.Background()
+	go func() {
+		g, err := gw.Next(ctx)
+		gs <- GlobalResult{g, err}
+	}()
+	go func() {
+		i, err := iw.Next(ctx)
+		is <- InstanceResult{i, err}
+	}()
+	go func() {
+		n, err := nw.Next(ctx)
+		ns <- NetworkResult{n, err}
+	}()
+	for {
+		select {
+		case input <- params:
+			global = NewContext(input.p)
+			instance = global.Instance(input.id)
+		case <-gs:
+		case <-is:
+		case <-ns:
+		}
+	}
 	for {
 		v := s.view()
 		opt := WatcherOptions{}
 		gw := v.global.Watcher(opt)
 		iw := v.instance.Watcher(opt)
 		nw := v.network.Watcher(opt)
-		ctx := context.Background()
 		var gs, is, ns chan struct{} // Signals
 		go func() {
 			gw.Next(ctx)

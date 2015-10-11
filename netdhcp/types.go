@@ -62,6 +62,11 @@ type GlobalWatcher interface {
 	Next(context.Context) (*Global, error)
 }
 
+type GlobalResult struct {
+	Global *Global
+	Err    error
+}
+
 // Instance represents an instance of the DHCP service and includes its
 // configuration.
 type Instance struct {
@@ -81,6 +86,11 @@ type InstanceWatcher interface {
 	Next(context.Context) (*Instance, error)
 }
 
+type InstanceResult struct {
+	Instance *Instance
+	Err      error
+}
+
 // Network represents a DHCP network with common configuration.
 type Network struct {
 	Attr
@@ -89,6 +99,11 @@ type Network struct {
 
 type NetworkWatcher interface {
 	Next(context.Context) (*Network, error)
+}
+
+type NetworkResult struct {
+	Network *Network
+	Err     error
 }
 
 // IPEntry represents an IP address allocation retrieved from the underlying
