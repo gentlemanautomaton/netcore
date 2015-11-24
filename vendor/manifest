@@ -1,0 +1,79 @@
+{
+	"version": 0,
+	"dependencies": [
+		{
+			"importpath": "github.com/coreos/etcd/Godeps/_workspace/src/github.com/ugorji/go/codec",
+			"repository": "https://github.com/coreos/etcd",
+			"revision": "2762e1f3f7ef22857122ece0016d4e40f494ce2d",
+			"branch": "master",
+			"path": "/Godeps/_workspace/src/github.com/ugorji/go/codec"
+		},
+		{
+			"importpath": "github.com/coreos/etcd/Godeps/_workspace/src/golang.org/x/net/context",
+			"repository": "https://github.com/coreos/etcd",
+			"revision": "2762e1f3f7ef22857122ece0016d4e40f494ce2d",
+			"branch": "master",
+			"path": "/Godeps/_workspace/src/golang.org/x/net/context"
+		},
+		{
+			"importpath": "github.com/coreos/etcd/client",
+			"repository": "https://github.com/coreos/etcd",
+			"revision": "2762e1f3f7ef22857122ece0016d4e40f494ce2d",
+			"branch": "master",
+			"path": "/client"
+		},
+		{
+			"importpath": "github.com/coreos/etcd/pkg/pathutil",
+			"repository": "https://github.com/coreos/etcd",
+			"revision": "2762e1f3f7ef22857122ece0016d4e40f494ce2d",
+			"branch": "master",
+			"path": "/pkg/pathutil"
+		},
+		{
+			"importpath": "github.com/coreos/etcd/pkg/types",
+			"repository": "https://github.com/coreos/etcd",
+			"revision": "2762e1f3f7ef22857122ece0016d4e40f494ce2d",
+			"branch": "master",
+			"path": "/pkg/types"
+		},
+		{
+			"importpath": "github.com/dustywilson/dnscache",
+			"repository": "https://github.com/dustywilson/dnscache",
+			"revision": "629999f911ad40033fdc976996029957982dd9b1",
+			"branch": "master"
+		},
+		{
+			"importpath": "github.com/krolaw/dhcp4",
+			"repository": "https://github.com/krolaw/dhcp4",
+			"revision": "ffbbb16f447b3e05b80e8ddecbb8ada36e2ae006",
+			"branch": "master"
+		},
+		{
+			"importpath": "github.com/miekg/dns",
+			"repository": "https://github.com/miekg/dns",
+			"revision": "d27455715200c7d3e321a1e5cadb27c9ee0b0f02",
+			"branch": "master"
+		},
+		{
+			"importpath": "golang.org/x/net/context",
+			"repository": "https://go.googlesource.com/net",
+			"revision": "4f2fc6c1e69d41baf187332ee08fbd2b296f21ed",
+			"branch": "master",
+			"path": "/context"
+		},
+		{
+			"importpath": "golang.org/x/net/internal/iana",
+			"repository": "https://go.googlesource.com/net",
+			"revision": "4f2fc6c1e69d41baf187332ee08fbd2b296f21ed",
+			"branch": "master",
+			"path": "/internal/iana"
+		},
+		{
+			"importpath": "golang.org/x/net/ipv4",
+			"repository": "https://go.googlesource.com/net",
+			"revision": "4f2fc6c1e69d41baf187332ee08fbd2b296f21ed",
+			"branch": "master",
+			"path": "/ipv4"
+		}
+	]
+}
