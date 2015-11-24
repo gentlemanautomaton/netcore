@@ -1,0 +1,82 @@
+{
+	"version": 0,
+	"dependencies": [
+		{
+			"importpath": "code.google.com/p/go-uuid/uuid",
+			"repository": "https://code.google.com/p/go-uuid",
+			"revision": "35bc42037350",
+			"branch": "default",
+			"path": "/uuid"
+		},
+		{
+			"importpath": "github.com/boltdb/bolt",
+			"repository": "https://github.com/boltdb/bolt",
+			"revision": "6e1ca38c6a73025366cd8705553b404746ee6e63",
+			"branch": "master"
+		},
+		{
+			"importpath": "github.com/coreos/go-etcd/etcd",
+			"repository": "https://github.com/coreos/go-etcd",
+			"revision": "003851be7bb0694fe3cc457a49529a19388ee7cf",
+			"branch": "master",
+			"path": "/etcd"
+		},
+		{
+			"importpath": "github.com/dustywilson/dnscache",
+			"repository": "https://github.com/dustywilson/dnscache",
+			"revision": "629999f911ad40033fdc976996029957982dd9b1",
+			"branch": "master"
+		},
+		{
+			"importpath": "github.com/jessevdk/go-flags",
+			"repository": "https://github.com/jessevdk/go-flags",
+			"revision": "0a28dbe50f23d8fce6b016975b964cfe7b97a20a",
+			"branch": "master"
+		},
+		{
+			"importpath": "github.com/krolaw/dhcp4",
+			"repository": "https://github.com/krolaw/dhcp4",
+			"revision": "ffbbb16f447b3e05b80e8ddecbb8ada36e2ae006",
+			"branch": "master"
+		},
+		{
+			"importpath": "github.com/miekg/dns",
+			"repository": "https://github.com/miekg/dns",
+			"revision": "d27455715200c7d3e321a1e5cadb27c9ee0b0f02",
+			"branch": "master"
+		},
+		{
+			"importpath": "github.com/sabhiram/go-colorize",
+			"repository": "https://github.com/sabhiram/go-colorize",
+			"revision": "e1128a35ae9b46d94b465198d359ca4af91beb94",
+			"branch": "master"
+		},
+		{
+			"importpath": "github.com/sabhiram/go-wol",
+			"repository": "https://github.com/sabhiram/go-wol",
+			"revision": "897785db93284959fb47f190b86b37629fae3132",
+			"branch": "master"
+		},
+		{
+			"importpath": "github.com/ugorji/go/codec",
+			"repository": "https://github.com/ugorji/go",
+			"revision": "ea9cd21fa0bc41ee4bdd50ac7ed8cbc7ea2ed960",
+			"branch": "master",
+			"path": "/codec"
+		},
+		{
+			"importpath": "golang.org/x/net/internal/iana",
+			"repository": "https://go.googlesource.com/net",
+			"revision": "4f2fc6c1e69d41baf187332ee08fbd2b296f21ed",
+			"branch": "master",
+			"path": "/internal/iana"
+		},
+		{
+			"importpath": "golang.org/x/net/ipv4",
+			"repository": "https://go.googlesource.com/net",
+			"revision": "4f2fc6c1e69d41baf187332ee08fbd2b296f21ed",
+			"branch": "master",
+			"path": "/ipv4"
+		}
+	]
+}
