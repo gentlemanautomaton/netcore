@@ -7,7 +7,7 @@ import (
 	"regexp"
 	"strings"
 
-	"code.google.com/p/go-uuid/uuid"
+	"github.com/pborman/uuid"
 )
 
 func instance() (string, error) {
