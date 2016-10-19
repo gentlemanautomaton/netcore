@@ -2,7 +2,7 @@ package netdnsetcd
 
 import (
 	"github.com/coreos/etcd/client"
-	"github.com/dustywilson/netcore/netdns"
+	"github.com/gentlemanautomaton/netcore/netdns"
 )
 
 // Provider implements all etcd storage interfaces necessary for operation of

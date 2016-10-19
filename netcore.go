@@ -5,10 +5,10 @@ import (
 	"log"
 	"os"
 
-	"github.com/dustywilson/netcore/netdhcp"
-	"github.com/dustywilson/netcore/netdhcpetcd"
-	"github.com/dustywilson/netcore/netdns"
-	"github.com/dustywilson/netcore/netdnsetcd"
+	"github.com/gentlemanautomaton/netcore/netdhcp"
+	"github.com/gentlemanautomaton/netcore/netdhcpetcd"
+	"github.com/gentlemanautomaton/netcore/netdns"
+	"github.com/gentlemanautomaton/netcore/netdnsetcd"
 )
 
 func init() {

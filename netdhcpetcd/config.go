@@ -5,7 +5,7 @@ import (
 	"net"
 
 	"github.com/coreos/etcd/client"
-	"github.com/dustywilson/netcore/netdhcp"
+	"github.com/gentlemanautomaton/netcore/netdhcp"
 	"golang.org/x/net/context"
 )
 

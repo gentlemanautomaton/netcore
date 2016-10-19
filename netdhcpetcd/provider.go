@@ -2,7 +2,7 @@ package netdhcpetcd
 
 import (
 	"github.com/coreos/etcd/client"
-	"github.com/dustywilson/netcore/netdhcp"
+	"github.com/gentlemanautomaton/netcore/netdhcp"
 )
 
 // Provider implements all etcd storage interfaces necessary for operation of

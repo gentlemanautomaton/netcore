@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"github.com/coreos/etcd/client"
-	"github.com/dustywilson/netcore/netdns"
+	"github.com/gentlemanautomaton/netcore/netdns"
 	"golang.org/x/net/context"
 )
 
