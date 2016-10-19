@@ -91,12 +91,14 @@ func (s *Service) load(p Provider, id string) error {
 		return err
 	}
 
-	netID := instanceData.Network
-	if netID == "" {
+	var netID string
+	switch {
+	case instanceData.Network != "":
+		netID = instanceData.Network
+	case globalData.Network != "":
 		netID = globalData.Network
-		if netID == "" {
-			return ErrNoConfigNetwork
-		}
+	default:
+		return ErrNoConfigNetwork
 	}
 
 	network := global.Network(netID)
