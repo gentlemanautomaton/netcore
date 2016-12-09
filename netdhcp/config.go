@@ -1,12 +1,6 @@
 package netdhcp
 
-import (
-	"net"
-	"time"
-
-	"github.com/krolaw/dhcp4"
-)
-
+/*
 var defaultConfig = Cfg{
 	Enabled: true,
 	NIC:     "eth0", // FIXME: Is it safe to have a default at all for this?
@@ -28,7 +22,7 @@ const minimumLeaseDuration = 60 * time.Second // FIXME: put this in a config
 
 // Config provides all of the necessary configuration context for the operation
 // of a netcore DNS instance.
-type Config interface {
+type ImmConfig interface {
 	Instance() string
 	Enabled() bool
 	NIC() string
@@ -54,18 +48,25 @@ func NewConfig(c *Cfg) Config {
 func DefaultConfig() Config {
 	return &config{defaultConfig.Copy()}
 }
+*/
 
-// Cfg provides a mutable implementation of the Config interface. It can be made
-// into an immutable Config instance via the NewConfig function.
-type Cfg struct {
-	Instance  string
-	Enabled   bool
-	NIC       string
-	IP        net.IP
-	Network   string
-	Subnet    *net.IPNet
+/*
+// Config represents server configuration data.
+type Config struct {
+	//Enabled   bool
+	NIC       string     // The network adaptor the server will listen on
+	IP        net.IP     // The IP address of the network adaptor
+	Subnet    *net.IPNet // The subnet the server will listen to
 	GuestPool *net.IPNet
-	Attr
+}
+*/
+
+/*
+
+// ConfigOverlay composes a series of Config structures into a single
+// overlay
+type ConfigOverlay struct {
+	source []*Config
 }
 
 // NewCfg creates a mutable Cfg instance from the given Config interface.
@@ -89,8 +90,12 @@ func NewCfg(c Config) Cfg {
 	}
 }
 
+func (c *Config) Overlay(source *Config) {
+
+}
+
 // Copy will make a deep copy of the Cfg.
-func (c *Cfg) Copy() Cfg {
+func (c *Config) Copy() Cfg {
 	return Cfg{
 		Instance:  c.Instance,
 		Enabled:   c.Enabled,
@@ -217,6 +222,7 @@ func copyOptions(source dhcp4.Options) dhcp4.Options {
 	}
 	return options
 }
+*/
 
 // Reference:
 /*

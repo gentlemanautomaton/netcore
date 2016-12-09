@@ -2,24 +2,23 @@ package netdhcp
 
 import (
 	"bytes"
-	"encoding/binary"
 	"errors"
 	"log"
 	"net"
 	"sort"
-	"strings"
 	"sync"
-	"time"
 
-	"golang.org/x/net/context"
+	"context"
 
 	"github.com/krolaw/dhcp4"
 )
 
 // Service provides netcore DHCP services.
 type Service struct {
-	m       sync.RWMutex // guards access to v
-	v       *service     // current view of the service, protected by m
+	mutex   sync.RWMutex // guards access to v
+	p       Provider
+	id      string
+	v       *service // current view of the service, protected by mutex
 	started chan bool
 	done    chan Completion
 }
@@ -28,24 +27,47 @@ type Service struct {
 // service instance ID.
 func NewService(provider Provider, instance string) *Service {
 	s := &Service{
+		p:       provider,
+		id:      instance,
 		started: make(chan bool, 1),
 		done:    make(chan Completion, 1),
 	}
 
-	go s.init(provider, instance)
+	go s.init()
 
 	return s
 }
 
-func (s *Service) init(p Provider, id string) {
-	if err := s.load(p, id); err != nil {
-		s.signalStarted(false)
-		s.signalDone(false, err)
+func (s *Service) init() {
+	s.mutex.RLock()
+	id := s.id
+	p := s.p
+	s.mutex.RUnlock()
+
+	if p == nil {
+		s.failedInit(errors.New("No provider given."))
 		return
 	}
+
+	if id == "" {
+		s.failedInit(errors.New("No instance identifier given."))
+		return
+	}
+
+	view, err := s.build(p, id)
+	if err != nil {
+		s.failedInit(err)
+		return
+	}
+
 	s.signalStarted(true)
-	err := dhcp4.ListenAndServeIf(s.view().cfg.NIC(), s)
+	err = dhcp4.ListenAndServeIf(view.config.ServerNIC(), s)
 	s.signalDone(true, err)
+}
+
+func (s *Service) failedInit(err error) {
+	s.signalStarted(false)
+	s.signalDone(false, err)
 }
 
 func (s *Service) signalStarted(success bool) {
@@ -58,83 +80,63 @@ func (s *Service) signalDone(initialized bool, err error) {
 	close(s.done)
 }
 
-func (s *Service) load(p Provider, id string) error {
-	if id == "" {
-		return errors.New("No instance identifier")
-	}
-
-	if p.GlobalProvider == nil {
-		return errors.New("No global provider")
-	}
-	if p.NetworkProvider == nil {
-		return errors.New("No network provider")
-	}
-	if p.InstanceProvider == nil {
-		return errors.New("No instance provider")
-	}
-	// FIXME: Check for all required provider interfaces
-
-	// TODO: Create watcher for each component and reload when configuration changes.
-
-	global := NewContext(p)
-	instance := global.Instance(id)
-
+func (s *Service) build(p Provider, id string) (*service, error) {
 	ctx := context.Background() // FIXME: Use a real cancellable context
 
-	globalData, err := global.Read(ctx)
+	gc := NewContext(p)
+	global, err := gc.Read(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	instanceData, err := instance.Read(ctx)
+	ic := gc.Instance(id)
+	instance, err := ic.Read(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	var netID string
-	switch {
-	case instanceData.Network != "":
-		netID = instanceData.Network
-	case globalData.Network != "":
-		netID = globalData.Network
-	default:
-		return ErrNoConfigNetwork
+	nid := MergeNetworkID(global, instance)
+	if nid == "" {
+		return nil, ErrNoConfigNetwork
 	}
 
-	network := global.Network(netID)
-	networkData, err := network.Read(ctx)
+	nc := gc.Network(nid)
+	network, err := nc.Read(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	cfg := Merge(globalData, instanceData, networkData) // TODO: Review order
-	if err := Validate(cfg); err != nil {
-		return err
+	config := MergeServerConfig(global, instance, network) // TODO: Review order
+	if err := ValidateServerConfig(&config); err != nil {
+		return nil, err
+	}
+
+	attr := MergeLeaseConfig(global, instance, network) // TODO: Review order
+	if err := ValidateLeaseConfig(&attr); err != nil {
+		return nil, err
 	}
 
 	srv := &service{
 		id:       id,
-		global:   global,
-		instance: instance,
-		network:  network,
-		cfg:      cfg,
+		global:   gc,
+		instance: ic,
+		network:  nc,
+		config:   config,
+		attr:     attr,
 	}
 
-	s.m.Lock()
-	defer s.m.Unlock()
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
 
 	s.v = srv
 
-	//s.inst = inst
-	//s.net = netwrk
-
-	return nil
+	return srv, nil
 }
 
 // view returns a consistent view of the service.
 func (s *Service) view() *service {
-	s.m.RLock()
-	defer s.m.RUnlock()
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
 	return s.v
 }
 
@@ -143,6 +145,7 @@ type params struct {
 	id string
 }
 
+/*
 func watch(ctx context.Context, p Provider, id string, gs chan GlobalResult, is chan InstanceResult, ns chan NetworkResult) {
 	opt := WatcherOptions{}
 	global, instance, network := load(p, id)
@@ -162,67 +165,70 @@ func watch(ctx context.Context, p Provider, id string, gs chan GlobalResult, is 
 		ns <- NetworkResult{n, err}
 	}()
 }
+*/
 
 func (s *Service) sync(chan params) {
 	// TODO: Figure this out
-	var (
-		gs       chan GlobalResult
-		is       chan InstanceResult
-		ns       chan NetworkResult
-		global   GlobalContext
-		instance InstanceContext
-		network  NetworkContext
-	)
-	for {
-		select {
-		case input <- params:
-			global = NewContext(input.p)
-			instance = global.Instance(input.id)
-			wctx := context.Background()
-			go func() {
-				g, err := gw.Next(wctx)
-				gs <- GlobalResult{g, err}
-			}()
-			go func() {
-				i, err := iw.Next(wctx)
-				is <- InstanceResult{i, err}
-			}()
-			go func() {
-				n, err := nw.Next(wctx)
-				ns <- NetworkResult{n, err}
-			}()
-		case <-gs:
-		case <-is:
-		case <-ns:
+	/*
+		var (
+			gs       <-chan GlobalUpdate
+			is       <-chan InstanceUpdate
+			ns       <-chan NetworkUpdate
+			global   GlobalContext
+			instance InstanceContext
+			network  NetworkContext
+		)
+		for {
+			select {
+			case input <- params:
+				global = NewContext(input.p)
+				instance = global.Instance(input.id)
+				wctx := context.Background()
+				go func() {
+					g, err := gw.Next(wctx)
+					gs <- GlobalResult{g, err}
+				}()
+				go func() {
+					i, err := iw.Next(wctx)
+					is <- InstanceResult{i, err}
+				}()
+				go func() {
+					n, err := nw.Next(wctx)
+					ns <- NetworkResult{n, err}
+				}()
+			case <-gs:
+			case <-is:
+			case <-ns:
+			}
 		}
-	}
-	for {
-		v := s.view()
-		opt := WatcherOptions{}
-		gw := v.global.Watcher(opt)
-		iw := v.instance.Watcher(opt)
-		nw := v.network.Watcher(opt)
-		var gs, is, ns chan struct{} // Signals
-		go func() {
-			gw.Next(ctx)
-			gs <- struct{}{}
-		}()
-		go func() {
-			iw.Next(ctx)
-			is <- struct{}{}
-		}()
-		go func() {
-			nw.Next(ctx)
-			ns <- struct{}{}
-		}()
-		select {
-		case <-gs:
-		case <-is:
-		case <-ns:
+		for {
+			v := s.view()
+			opt := WatcherOptions{}
+			gw := v.global.Watcher(opt)
+			iw := v.instance.Watcher(opt)
+			nw := v.network.Watcher(opt)
+			var gs, is, ns chan struct{} // Signals
+			go func() {
+				gw.Next(ctx)
+				gs <- struct{}{}
+			}()
+			go func() {
+				iw.Next(ctx)
+				is <- struct{}{}
+			}()
+			go func() {
+				nw.Next(ctx)
+				ns <- struct{}{}
+			}()
+			select {
+			case <-gs:
+			case <-is:
+			case <-ns:
+			}
+			// TODO: Signal the ctx?
+			// TODO: Reload
 		}
-		// TODO: Signal the ctx?
-		// TODO: Reload
-	}
+	*/
 }
 
 // Started returns a channel that will be signaled when the service has started
@@ -239,6 +245,7 @@ func (s *Service) Done() chan Completion {
 
 // ServeDHCP is called by dhcp4.ListenAndServe when the service is started
 func (s *Service) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, reqOptions dhcp4.Options) (response dhcp4.Packet) {
+	return s.view().ServeDHCP(packet, msgType, reqOptions)
 }
 
 type cache struct {
@@ -254,11 +261,14 @@ type service struct {
 	global   GlobalContext
 	instance InstanceContext
 	network  NetworkContext
-	cfg      Config
+	config   Config
+	attr     Attr
 	//cache    cache
 }
 
 func (s *service) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, reqOptions dhcp4.Options) (response dhcp4.Packet) {
+	ctx := context.TODO() // FIXME: Use a real cancellable context
+
 	switch msgType {
 	case dhcp4.Discover:
 		// RFC 2131 4.3.1
@@ -272,51 +282,56 @@ func (s *service) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, reqO
 		}
 		log.Printf("DHCP Discover from %s\n", addr.String())
 
-		// FIXME: Look up the MAC entry with cascaded attributes?
-		data, found, err := s.net.MAC.Lookup(context.Background(), addr)
+		/*
+			data, found, err := s.net.MAC.Lookup(context.Background(), addr)
+			if err != nil {
+				// FIXME: Log error?
+				return nil
+			}
+		*/
+
+		data, err := s.Attr(ctx, addr)
 		if err != nil {
 			// FIXME: Log error?
 			return nil
 		}
 
-		ip, lease, err := s.selectIP(context.Background(), data.IP, addr)
+		_, _, err = s.selectAssignment(context.Background(), data.Assignments, addr)
 		if err != nil {
 			// FIXME: Log error?
 			return nil
 		}
 
-		for _, prefix := range macPrefixes(addr) {
+		/*
+			// Existing Lease
+			if found {
+				options := s.getOptionsFromMAC(data)
+				log.Printf("DHCP Discover from %s (we offer %s from current lease)\n", addr.String(), lease.IP.String())
+				// for x, y := range reqOptions {
+				// 	log.Printf("\tR[%v] %v %s\n", x, y, y)
+				// }
+				// for x, y := range options {
+				// 	log.Printf("\tO[%v] %v %s\n", x, y, y)
+				// }
+				return dhcp4.ReplyPacket(packet, dhcp4.Offer, s.cfg.IP().To4(), lease.IP.To4(), s.getLeaseDurationForRequest(reqOptions, lease.Duration), options.SelectOrderOrAll(reqOptions[dhcp4.OptionParameterRequestList]))
+			}
 
-		}
+			// New Lease
+			ip = s.getIPFromPool()
+			if ip != nil {
+				options := s.getOptionsFromMAC(lease)
+				log.Printf("DHCP Discover from %s (we offer %s from pool)\n", mac.String(), ip.String())
+				// for x, y := range reqOptions {
+				// 	log.Printf("\tR[%v] %v %s\n", x, y, y)
+				// }
+				// for x, y := range options {
+				// 	log.Printf("\tO[%v] %v %s\n", x, y, y)
+				// }
+				return dhcp4.ReplyPacket(packet, dhcp4.Offer, s.cfg.IP().To4(), ip.To4(), s.getLeaseDurationForRequest(reqOptions, s.cfg.LeaseDuration()), options.SelectOrderOrAll(reqOptions[dhcp4.OptionParameterRequestList]))
+			}
+		*/
 
-		// Existing Lease
-		if found {
-			options := s.getOptionsFromMAC(data)
-			log.Printf("DHCP Discover from %s (we offer %s from current lease)\n", addr.String(), lease.IP.String())
-			// for x, y := range reqOptions {
-			// 	log.Printf("\tR[%v] %v %s\n", x, y, y)
-			// }
-			// for x, y := range options {
-			// 	log.Printf("\tO[%v] %v %s\n", x, y, y)
-			// }
-			return dhcp4.ReplyPacket(packet, dhcp4.Offer, s.cfg.IP().To4(), lease.IP.To4(), s.getLeaseDurationForRequest(reqOptions, lease.Duration), options.SelectOrderOrAll(reqOptions[dhcp4.OptionParameterRequestList]))
-		}
-
-		// New Lease
-		ip := s.getIPFromPool()
-		if ip != nil {
-			options := s.getOptionsFromMAC(lease)
-			log.Printf("DHCP Discover from %s (we offer %s from pool)\n", mac.String(), ip.String())
-			// for x, y := range reqOptions {
-			// 	log.Printf("\tR[%v] %v %s\n", x, y, y)
-			// }
-			// for x, y := range options {
-			// 	log.Printf("\tO[%v] %v %s\n", x, y, y)
-			// }
-			return dhcp4.ReplyPacket(packet, dhcp4.Offer, s.cfg.IP().To4(), ip.To4(), s.getLeaseDurationForRequest(reqOptions, s.cfg.LeaseDuration()), options.SelectOrderOrAll(reqOptions[dhcp4.OptionParameterRequestList]))
-		}
-
-		log.Printf("DHCP Discover from %s (no offer due to no addresses available in pool)\n", mac.String())
+		//log.Printf("DHCP Discover from %s (no offer due to no addresses available in pool)\n", mac.String())
 		// FIXME: Send to StatHat and/or increment a counter
 		// TODO: Send an email?
 
@@ -325,96 +340,115 @@ func (s *service) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, reqO
 	case dhcp4.Request:
 		// RFC 2131 4.3.2
 		// FIXME: send to StatHat and/or increment a counter
-		mac := packet.CHAddr()
+		addr := packet.CHAddr()
 
 		// Check MAC blacklist
-		if !s.isMACPermitted(mac) {
-			log.Printf("DHCP Request from %s\n is not permitted", mac.String())
+		if !s.isMACPermitted(addr) {
+			log.Printf("DHCP Request from %s\n is not permitted", addr.String())
 			return nil
 		}
 
 		// Check IP presence
 		state, requestedIP := s.getRequestState(packet, reqOptions)
-		log.Printf("DHCP Request (%s) from %s...\n", state, mac.String())
+		log.Printf("DHCP Request (%s) from %s...\n", state, addr.String())
 		if len(requestedIP) == 0 || requestedIP.IsUnspecified() { // no IP provided at all... why? FIXME
-			log.Printf("DHCP Request (%s) from %s (empty IP, so we're just ignoring this request)\n", state, mac.String())
+			log.Printf("DHCP Request (%s) from %s (empty IP, so we're just ignoring this request)\n", state, addr.String())
 			return nil
 		}
 
 		// Check IPv4
 		if len(requestedIP) != net.IPv4len {
-			log.Printf("DHCP Request (%s) from %s wanting %s (IPv6 address requested, so we're just ignoring this request)\n", state, mac.String(), requestedIP.String())
+			log.Printf("DHCP Request (%s) from %s wanting %s (IPv6 address requested, so we're just ignoring this request)\n", state, addr.String(), requestedIP.String())
 			return nil
 		}
 
 		// Check IP subnet
-		if !s.cfg.Subnet().Contains(requestedIP) {
-			log.Printf("DHCP Request (%s) from %s wanting %s (we reject due to wrong subnet)\n", state, mac.String(), requestedIP.String())
-			return dhcp4.ReplyPacket(packet, dhcp4.NAK, s.cfg.IP().To4(), nil, 0, nil)
+		if !s.config.Subnet.Contains(requestedIP) {
+			log.Printf("DHCP Request (%s) from %s wanting %s (we reject due to wrong subnet)\n", state, addr.String(), requestedIP.String())
+			return dhcp4.ReplyPacket(packet, dhcp4.NAK, s.config.IP.To4(), nil, 0, nil)
 		}
 
 		// Check Target Server
 		targetServerIP := packet.SIAddr()
 		if len(targetServerIP) > 0 && !targetServerIP.IsUnspecified() {
-			log.Printf("DHCP Request (%s) from %s wanting %s is in response to a DHCP offer from %s\n", state, mac.String(), requestedIP.String(), targetServerIP.String())
-			if s.cfg.IP().Equal(targetServerIP) {
+			log.Printf("DHCP Request (%s) from %s wanting %s is in response to a DHCP offer from %s\n", state, addr.String(), requestedIP.String(), targetServerIP.String())
+			if s.config.IP.Equal(targetServerIP) {
 				return nil
 			}
 		}
 
 		// Process Request
-		log.Printf("DHCP Request (%s) from %s wanting %s...\n", state, mac.String(), requestedIP.String())
-		lease, found, err := s.p.MAC(mac, true)
+		log.Printf("DHCP Request (%s) from %s wanting %s...\n", state, addr.String(), requestedIP.String())
+
+		data, err := s.Attr(ctx, addr)
 		if err != nil {
+			// FIXME: Log error?
 			return nil
 		}
 
-		if found {
-			// Existing Lease
-			lease.Duration = s.getLeaseDurationForRequest(reqOptions, s.cfg.LeaseDuration())
-			if lease.IP.Equal(requestedIP) {
-				err = s.p.RenewLease(lease)
+		_, _, err = s.selectAssignment(context.Background(), data.Assignments, addr)
+		if err != nil {
+			// FIXME: Log error?
+			return nil
+		}
+
+		/*
+			lease, found, err := s.p.MAC(mac, true)
+			if err != nil {
+				return nil
+			}
+		*/
+
+		/*
+			if found {
+				// Existing Lease
+				lease.Duration = s.getLeaseDurationForRequest(reqOptions, s.cfg.LeaseDuration())
+				if lease.IP.Equal(requestedIP) {
+					err = s.p.RenewLease(lease)
+				} else {
+					log.Printf("DHCP Request (%s) from %s wanting %s (we reject due to lease mismatch, should be %s)\n", state, lease.MAC.String(), requestedIP.String(), lease.IP.String())
+					return dhcp4.ReplyPacket(packet, dhcp4.NAK, s.cfg.IP().To4(), nil, 0, nil)
+				}
 			} else {
-				log.Printf("DHCP Request (%s) from %s wanting %s (we reject due to lease mismatch, should be %s)\n", state, lease.MAC.String(), requestedIP.String(), lease.IP.String())
-				return dhcp4.ReplyPacket(packet, dhcp4.NAK, s.cfg.IP().To4(), nil, 0, nil)
-			}
-		} else {
-			// Check IP subnet is within the guestPool (we don't want users requesting non-pool addresses unless we assigned it to their MAC, administratively)
-			if !s.cfg.GuestPool().Contains(requestedIP) {
-				log.Printf("DHCP Request (%s) from %s wanting %s (we reject due to not being within the guestPool)\n", state, mac.String(), requestedIP.String())
-				return dhcp4.ReplyPacket(packet, dhcp4.NAK, s.cfg.IP().To4(), nil, 0, nil)
-			}
+				// Check IP subnet is within the guestPool (we don't want users requesting non-pool addresses unless we assigned it to their MAC, administratively)
+				if !s.cfg.GuestPool().Contains(requestedIP) {
+					log.Printf("DHCP Request (%s) from %s wanting %s (we reject due to not being within the guestPool)\n", state, mac.String(), requestedIP.String())
+					return dhcp4.ReplyPacket(packet, dhcp4.NAK, s.cfg.IP().To4(), nil, 0, nil)
+				}
 
-			// New lease
-			lease = &MACEntry{
-				MAC:      mac,
-				IP:       requestedIP,
-				Duration: s.getLeaseDurationForRequest(reqOptions, s.cfg.LeaseDuration()),
+				// New lease
+				lease = &MACEntry{
+					MAC:      mac,
+					IP:       requestedIP,
+					Duration: s.getLeaseDurationForRequest(reqOptions, s.cfg.LeaseDuration()),
+				}
+				err = s.p.CreateLease(lease)
 			}
-			err = s.p.CreateLease(lease)
-		}
+		*/
 
-		if err == nil {
-			s.maintainDNSRecords(lease, packet, reqOptions) // TODO: Move this?
-			options := s.getOptionsFromMAC(lease)
-			log.Printf("DHCP Request (%s) from %s wanting %s (we agree)\n", state, mac.String(), requestedIP.String())
-			return dhcp4.ReplyPacket(packet, dhcp4.ACK, s.cfg.IP().To4(), requestedIP.To4(), lease.Duration, options.SelectOrderOrAll(reqOptions[dhcp4.OptionParameterRequestList]))
-		}
+		/*
+			if err == nil {
+				s.maintainDNSRecords(lease, packet, reqOptions) // TODO: Move this?
+				options := s.getOptionsFromMAC(lease)
+				log.Printf("DHCP Request (%s) from %s wanting %s (we agree)\n", state, mac.String(), requestedIP.String())
+				return dhcp4.ReplyPacket(packet, dhcp4.ACK, s.cfg.IP().To4(), requestedIP.To4(), lease.Duration, options.SelectOrderOrAll(reqOptions[dhcp4.OptionParameterRequestList]))
+			}
+		*/
 
-		log.Printf("DHCP Request (%s) from %s wanting %s (we reject due to address collision)\n", state, mac.String(), requestedIP.String())
-		return dhcp4.ReplyPacket(packet, dhcp4.NAK, s.cfg.IP().To4(), nil, 0, nil)
+		log.Printf("DHCP Request (%s) from %s wanting %s (we reject due to address collision)\n", state, addr.String(), requestedIP.String())
+		return dhcp4.ReplyPacket(packet, dhcp4.NAK, s.config.IP.To4(), nil, 0, nil)
 
 	case dhcp4.Decline:
 		// RFC 2131 4.3.3
 		// FIXME: release from DB?  tick a flag?  increment a counter?  send to StatHat?
-		mac := packet.CHAddr()
-		log.Printf("DHCP Decline from %s\n", mac.String())
+		addr := packet.CHAddr()
+		log.Printf("DHCP Decline from %s\n", addr.String())
 
 	case dhcp4.Release:
 		// RFC 2131 4.3.4
 		// FIXME: release from DB?  tick a flag?  increment a counter?  send to StatHat?
-		mac := packet.CHAddr()
-		log.Printf("DHCP Release from %s\n", mac.String())
+		addr := packet.CHAddr()
+		log.Printf("DHCP Release from %s\n", addr.String())
 
 	case dhcp4.Inform:
 		// RFC 2131 4.3.5
@@ -422,33 +456,35 @@ func (s *service) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, reqO
 		// FIXME: release from DB?  tick a flag?  increment a counter?  send to StatHat?
 		// FIXME: we should reply with valuable info, but not assign an IP to this client, per RFC 2131 for DHCPINFORM
 		// NOTE: the client's IP is supposed to only be in the ciaddr field, not the requested IP field, per RFC 2131 4.4.3
-		mac := packet.CHAddr()
+		//addr := packet.CHAddr()
 		ip := packet.CIAddr()
 		if len(ip) > 0 && !ip.IsUnspecified() {
-			log.Printf("DHCP Inform from %s for %s \n", mac.String(), ip.String())
-			if len(ip) == net.IPv4len && s.cfg.GuestPool().Contains(ip) {
-				entry, found, _ := s.p.MAC(mac, true)
-				if found {
-					options := s.getOptionsFromMAC(entry)
-					return informReplyPacket(packet, dhcp4.ACK, s.cfg.IP().To4(), options.SelectOrderOrAll(reqOptions[dhcp4.OptionParameterRequestList]))
+			/*
+				log.Printf("DHCP Inform from %s for %s \n", addr.String(), ip.String())
+				if len(ip) == net.IPv4len && s.config.GuestPool().Contains(ip) {
+					entry, found, _ := s.p.MAC(addr, true)
+					if found {
+						options := s.getOptionsFromMAC(entry)
+						return informReplyPacket(packet, dhcp4.ACK, s.cfg.IP().To4(), options.SelectOrderOrAll(reqOptions[dhcp4.OptionParameterRequestList]))
+					}
 				}
-			}
+			*/
 		}
 	}
 
 	return nil
 }
 
-func (s *Service) isMACPermitted(mac net.HardwareAddr) bool {
+func (s *service) isMACPermitted(addr net.HardwareAddr) bool {
 	// TODO: determine whether or not this MAC should be permitted to get an IP at all (blacklist? whitelist?)
 	return true
 }
 
-func (s *Service) pepareLease(target net.HardwareAddr) {
+func (s *service) pepareLease(target net.HardwareAddr) {
 
 }
 
-func (s *Service) selectIP(ctx context.Context, ipset []*IP, target net.HardwareAddr) (*IP, *Lease, error) {
+func (s *service) selectAssignment(ctx context.Context, assignments AssignmentSet, target net.HardwareAddr) (*Assignment, *Lease, error) {
 	// Enumerate all reservations and dynamic allocations and select the most
 	// appropriate lease based on the following algorithm:
 	// 1. Reservation with active lease matching this MAC, sorted by priority and then by recency
@@ -461,46 +497,50 @@ func (s *Service) selectIP(ctx context.Context, ipset []*IP, target net.Hardware
 	//       regardless of whatever the current lease is.
 
 	type result struct {
-		IP    *IP
 		Lease *Lease
-		Found bool
 		Err   error
 	}
 
-	if len(ipset) == 0 {
-		return nil, nil, nil
+	if len(assignments) == 0 {
+		return nil, nil, errors.New("No assignments specified.")
 	}
 
-	sort.Sort(IPSet(ipset))
+	// TODO: Clone the assignment set?
+
+	sort.Sort(assignments)
 
 	// Issue a lease lookup for each potential IP address in parallel
-	queries := make([]chan result, 0, len(ipset))
-	for _, ip := range ipset {
+	queries := make([]chan result, 0, len(assignments))
+	for i := range assignments {
 		// FIXME: Make sure the ip address is within this network
-		ch := make(chan leaseLookup)
+		ch := make(chan result)
 		queries = append(queries, ch)
-		go func(ip *IP) {
-			lease, found, err := s.net.Lease.Lookup(ctx, ip.Address)
-			ch <- result{lease, found, err}
-		}(ip)
+		go func(assignment *Assignment) {
+			lease, err := s.network.Lease(assignment.Address).Read(ctx)
+			ch <- result{lease, err}
+		}(assignments[i])
 	}
 
-	// Process each ip and it's resulting lease lookup in preferential order
-	for _, result := range queries {
-		if result.Err != nil {
-			return nil, result.Err
-		}
-		if result.Found {
-			if bytes.Equal(result.Lease.MAC, target) {
-				return ipset[i], result.Lease, nil
+	// Process each IP and its resulting lease lookup in preferential order
+	for i, ch := range queries {
+		res := <-ch
+		switch res.Err {
+		case nil:
+			if bytes.Equal(res.Lease.MAC, target) {
+				// TODO: Renew the lease
+				return assignments[i], res.Lease, nil
 			}
+		case ErrNotFound:
+			// TODO: Attempt to create the lease
+		default:
+			// Something went horribly wrong
+			return nil, nil, res.Err
 		}
-		return result.IP, nil, nil
 	}
 	return nil, nil, nil
 }
 
-func (s *Service) getRequestState(packet dhcp4.Packet, reqOptions dhcp4.Options) (string, net.IP) {
+func (s *service) getRequestState(packet dhcp4.Packet, reqOptions dhcp4.Options) (string, net.IP) {
 	state := "NEW"
 	requestedIP := net.IP(reqOptions[dhcp4.OptionRequestedIPAddress])
 	if len(requestedIP) == 0 || requestedIP.IsUnspecified() { // empty
@@ -510,7 +550,8 @@ func (s *Service) getRequestState(packet dhcp4.Packet, reqOptions dhcp4.Options)
 	return state, requestedIP
 }
 
-func (s *Service) getLeaseDurationForRequest(reqOptions dhcp4.Options, defaultDuration time.Duration) time.Duration {
+/*
+func (s *service) getLeaseDurationForRequest(reqOptions dhcp4.Options, defaultDuration time.Duration) time.Duration {
 	// If a requested lease duration is accepted by policy we hand it back to them
 	// If a requested lease duration is not accepted by policy we constrain it to the policy's minimum and maximum
 	// If a lease duration was not requested then we give them the default duration provided to this function
@@ -535,7 +576,7 @@ func (s *Service) getLeaseDurationForRequest(reqOptions dhcp4.Options, defaultDu
 	return leaseDuration
 }
 
-func (s *Service) getIPFromPool() net.IP {
+func (s *service) getIPFromPool() net.IP {
 	// locate an unused IP address (can this be more efficient?  yes!  FIXME)
 	// TODO: Create a channel and spawn a goproc with something like this function to feed it; then have the server pull addresses from that channel
 	gp := s.cfg.GuestPool()
@@ -547,8 +588,10 @@ func (s *Service) getIPFromPool() net.IP {
 	}
 	return nil
 }
+*/
 
-func (s *Service) maintainDNSRecords(entry *MACEntry, packet dhcp4.Packet, reqOptions dhcp4.Options) {
+/*
+func (s *service) maintainDNSRecords(entry *MACEntry, packet dhcp4.Packet, reqOptions dhcp4.Options) {
 	options := s.getOptionsFromMAC(entry)
 	if domain, ok := options[dhcp4.OptionDomainName]; ok {
 		// FIXME:  danger!  we're mixing systems here...  if we keep this up, we will have spaghetti!
@@ -561,7 +604,8 @@ func (s *Service) maintainDNSRecords(entry *MACEntry, packet dhcp4.Packet, reqOp
 		if name != "" {
 			host := strings.ToLower(strings.Join([]string{name, string(domain)}, "."))
 			// TODO: Pick a TTL for the record and use it
-			s.p.RegisterA(host, entry.IP, false, 0, s.cfg.LeaseDuration())
+			// FIXME: Make this work again
+			//s.p.RegisterA(host, entry.IP, false, 0, s.cfg.LeaseDuration())
 		} else {
 			log.Println(">> No host name")
 		}
@@ -569,8 +613,49 @@ func (s *Service) maintainDNSRecords(entry *MACEntry, packet dhcp4.Packet, reqOp
 		log.Println(">> No domain name")
 	}
 }
+*/
 
-func (s *Service) getOptionsFromMAC(entry *MACEntry) dhcp4.Options {
+// Attr retrieves the DHCP lease configuration for the given MAC address by
+// overlaying all of the possible configuration sources.
+//
+// Sources are overlayed in the following order:
+// 1. Global
+// 2. Network
+// 3. Instance
+// 4. Global MAC prefixes (least specific to most specific)
+// 5. Network MAC prefixes (least specific to most specific)
+// 6. Global type
+// 7. Network type
+// 8. Global device
+// 9. Network device
+//
+// TODO: Maintain a cache of observers for recently retrieved MAC prefix data.
+//       The observers should be closed and removed from the cache after some
+//       duration since the last retrieval (which could be days).
+func (s *service) Attr(ctx context.Context, addr net.HardwareAddr) (attr Attr, err error) {
+	addrSet := macPrefixes(addr)
+	gpSlice := make([]LeaseConfig, 0, len(addrSet))
+	npSlice := make([]LeaseConfig, 0, len(addrSet))
+
+	// Global MAC Prefixes
+	for _, paddr := range macPrefixes(addr) {
+		gprefix, perr := s.global.Prefix(paddr).Read(ctx)
+		if perr == nil {
+			gpSlice = append(gpSlice, gprefix)
+		}
+		nprefix, perr := s.network.Prefix(paddr).Read(ctx)
+		if perr == nil {
+			npSlice = append(npSlice, nprefix)
+		}
+	}
+	gpAttr := MergeLeaseConfig(gpSlice...)
+	npAttr := MergeLeaseConfig(npSlice...)
+	attr = MergeLeaseConfig(&s.attr, &gpAttr, &npAttr)
+	return
+}
+
+/*
+func (s *service) getOptionsFromMAC(entry *MACEntry) dhcp4.Options {
 	options := dhcp4.Options{}
 	defaultOptions := s.cfg.Options()
 
@@ -666,6 +751,7 @@ func (s *Service) getOptionsFromMAC(entry *MACEntry) dhcp4.Options {
 
 	return options
 }
+*/
 
 // ReplyPacket creates a reply packet that a Server would send to a client.
 // It uses the req Packet param to copy across common/necessary fields to

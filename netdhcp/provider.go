@@ -1,28 +1,33 @@
 package netdhcp
 
 import (
+	"context"
 	"net"
 	"time"
-
-	"golang.org/x/net/context"
 )
 
-// Provider carries all storage interfaces necessary for operation of
-// the DHCP service.
-/*
-type Provider struct {
-	ConfigProvider
-	DeviceProvider
-	LeaseProvider
+// Provider is the interface that must be fulfilled by providers of DHCP
+// configuration data.
+type Provider interface {
+	GlobalProvider
 	InstanceProvider
 	NetworkProvider
+	PrefixProvider
 	TypeProvider
+	DeviceProvider
+	MACProvider
+	NetworkPrefixProvider
+	NetworkTypeProvider
+	NetworkDeviceProvider
+	NetworkMACProvider
+	NetworkLeaseProvider
+	// TODO: Add interface for Provider state change notification, including Disconnected, and LocalOnly states
 }
-*/
 
-// Provider carries all storage interfaces necessary for operation of
+/*
+// MixedProvider carries all storage interfaces necessary for operation of
 // the DHCP service.
-type Provider struct {
+type MixedProvider struct {
 	GlobalProvider
 	InstanceProvider
 	NetworkProvider
@@ -34,58 +39,70 @@ type Provider struct {
 	NetworkMACProvider
 	NetworkLeaseProvider
 }
-
-// Provider implements all storage interfaces necessary for operation of
-// the DHCP service.
-/*
-type Provider struct {
-	Global
-	InstanceProvider
-	NetworkProvider
-}
-*/
-
-// Global provides access to configuration, type, host, and MAC attributes
-// shared across all networks.
-/*
-type Global struct {
-	ConfigProvider
-	Type   TypeProvider
-	Device DeviceProvider
-	MAC    MACProvider
-}
-*/
-
-// ConfigProvider provides DHCP configuration at global, network and instance
-// levels.
-/*
-type ConfigProvider interface {
-	Config() (Config, error) // TODO: Add ctx?
-}
 */
 
 // GlobalProvider provides access to global configuration data.
 type GlobalProvider interface {
 	Global(ctx context.Context) (Global, error)
-	GlobalWatcher(opt WatcherOptions) GlobalWatcher // TODO: Consider moving this into its own interface
+}
+
+// GlobalChanProvider provides a channel of global configuration changes.
+type GlobalChanProvider interface {
+	GlobalChan() GlobalChan // TODO: Consider moving this into its own interface that is optionally supported
 }
 
 // InstanceProvider provides access to instance configuration data.
 type InstanceProvider interface {
 	Instance(ctx context.Context, id string) (Instance, error)
-	InstanceWatcher(id string, opt WatcherOptions) InstanceWatcher // TODO: Consider moving this into its own interface
 }
 
-// NetworkProvider provides access to Network data.
+// InstanceChanProvider provides a channel of instance configuration changes.
+type InstanceChanProvider interface {
+	InstanceChan(ctx context.Context, id string) InstanceChan
+}
+
+// NetworkProvider provides access to network configuration.
 type NetworkProvider interface {
 	Network(ctx context.Context, id string) (Network, error)
-	NetworkWatcher(id string, opt WatcherOptions) NetworkWatcher // TODO: Consider moving this into its own interface
 }
 
-// TypeProvider provides access to type data.
+// NetworkChanProvider provides a channel of network configuration changes.
+type NetworkChanProvider interface {
+	NetworkChan(ctx context.Context, id string) NetworkChan
+}
+
+// PrefixProvider provides access to global MAC prefix configuration.
+type PrefixProvider interface {
+	Prefix(ctx context.Context, addr net.HardwareAddr) (Prefix, error)
+	PrefixList(ctx context.Context) ([]Prefix, error)
+}
+
+// PrefixChanProvider provides a channel of global type configuration changes.
+type PrefixChanProvider interface {
+	PrefixChan(ctx context.Context, addr net.HardwareAddr) PrefixChan
+}
+
+// NetworkPrefixProvider provides access to type data for a particular network.
+type NetworkPrefixProvider interface {
+	NetworkPrefix(ctx context.Context, network string, addr net.HardwareAddr) (Prefix, error)
+	NetworkPrefixList(ctx context.Context, network string) ([]Prefix, error)
+}
+
+// NetworkPrefixChanProvider provides a channel of network type configuration
+// changes.
+type NetworkPrefixChanProvider interface {
+	NetworkPrefixChan(ctx context.Context, network string, addr net.HardwareAddr) PrefixChan
+}
+
+// TypeProvider provides access to global type configuration.
 type TypeProvider interface {
 	Type(ctx context.Context, id string) (Type, error)
 	TypeList(ctx context.Context) ([]Type, error)
+}
+
+// TypeChanProvider provides a channel of global type configuration changes.
+type TypeChanProvider interface {
+	TypeChan(ctx context.Context, id string) TypeChan
 }
 
 // NetworkTypeProvider provides access to type data for a particular network.
@@ -94,10 +111,22 @@ type NetworkTypeProvider interface {
 	NetworkTypeList(ctx context.Context, network string) ([]Type, error)
 }
 
+// NetworkTypeChanProvider provides a channel of network type configuration
+// changes.
+type NetworkTypeChanProvider interface {
+	NetworkTypeChan(ctx context.Context, network string, id string) TypeChan
+}
+
 // DeviceProvider provides access to global device data.
 type DeviceProvider interface {
 	Device(ctx context.Context, device string) (Device, error)
 	DeviceList(ctx context.Context) ([]Device, error)
+}
+
+// DeviceChanProvider provides a channel of global device configuration
+// changes.
+type DeviceChanProvider interface {
+	DeviceChan(ctx context.Context, id string) DeviceChan
 }
 
 // NetworkDeviceProvider provides access to device data for a particular
@@ -105,6 +134,12 @@ type DeviceProvider interface {
 type NetworkDeviceProvider interface {
 	NetworkDevice(ctx context.Context, network string, device string) (Device, error)
 	NetworkDeviceList(ctx context.Context, network string) ([]Device, error)
+}
+
+// NetworkDeviceChanProvider provides a channel of network device configuration
+// changes.
+type NetworkDeviceChanProvider interface {
+	NetworkDeviceChan(ctx context.Context, network string, id string) DeviceChan
 }
 
 // MACProvider provides access to MAC data.
@@ -131,15 +166,6 @@ type NetworkLeaseProvider interface {
 }
 
 /*
-func hostname() string {
-	return "server.oly.scj.io"
-}
-
-// merge combines configuration data in sensible way
-func merge(c1 Config, c2 Config) Config {
-	return NewConfig(&Cfg{}) // TODO: Write me
-}
-
 // example demonstrates how to use a provider to create a new lease
 func exampleCreate(p Provider, ip net.IP, mac net.HardwareAddr) {
 	gc, _ := p.Config()
@@ -153,33 +179,5 @@ func exampleCreate(p Provider, ip net.IP, mac net.HardwareAddr) {
 	if ok, _ := network.Lease.Create(context.Background(), ip, mac, expiration); ok {
 		network.MAC.Assign(context.Background(), mac, ip)
 	}
-}
-*/
-
-// Old design:
-/*
-// Provider implements all storage interfaces necessary for operation of
-// the DHCP service.
-type Provider struct {
-	ConfigProvider
-	DataProvider
-}
-
-// ConfigProvider provides DHCP configuration to the DHCP service.
-type ConfigProvider interface {
-	Init() error
-	Config() (Config, error)
-	//ConfigStream() chan<- Config
-}
-
-// DataProvider provides DHCP data to the DHCP service.
-type DataProvider interface {
-	IP(net.IP) (IPEntry, error)
-	HasIP(net.IP) bool
-	MAC(mac net.HardwareAddr, cascade bool) (entry *MACEntry, found bool, err error)
-	RenewLease(lease *MACEntry) error
-	CreateLease(lease *MACEntry) error
-	WriteLease(lease *MACEntry) error
-	RegisterA(fqdn string, ip net.IP, exclusive bool, ttl uint32, expiration time.Duration) error
 }
 */
