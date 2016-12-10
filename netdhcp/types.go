@@ -122,7 +122,7 @@ type LeaseConfig interface {
 	LeaseDomain() string
 	LeaseTFTP() string
 	LeaseNTP() net.IP
-	LeasePool() *net.IPNet
+	LeasePools() PoolSet
 	LeaseDuration() time.Duration
 }
 
@@ -169,15 +169,14 @@ func ValidateLeaseConfig(c LeaseConfig) error {
 
 // Attr represents a set of attributes for a DHCP lease.
 type Attr struct {
-	Subnet      *net.IPNet
-	Gateway     net.IP
-	Domain      string
-	TFTP        string
-	NTP         net.IP
-	Pool        *net.IPNet    // The pool of addresses the lease will draw from for dynamic assignments
-	Assignments AssignmentSet // IP address assignments
-	Duration    time.Duration
-	Options     dhcp4.Options // TODO: Get rid of this and add a property for each option?
+	Subnet   *net.IPNet
+	Gateway  net.IP
+	Domain   string
+	TFTP     string
+	NTP      net.IP
+	Pools    PoolSet // The pools of addresses the lease will draw from for dynamic assignments
+	Duration time.Duration
+	Options  dhcp4.Options // TODO: Get rid of this and add a property for each option?
 	// TODO: Adds boatloads of DHCP options
 }
 
@@ -211,12 +210,10 @@ func (a *Attr) LeaseNTP() net.IP {
 	return a.NTP
 }
 
-// LeasePool returns the IP address pool that the DHCP server will issue
+// LeasePools returns the IP address pool that the DHCP server will issue
 // addresses from when granting leases.
-//
-// TODO: Consider making this a slice of possible pools.
-func (a *Attr) LeasePool() *net.IPNet {
-	return a.Pool
+func (a *Attr) LeasePools() PoolSet {
+	return a.Pools
 }
 
 // LeaseDuration returns the lease duration that the DHCP server will use
@@ -243,11 +240,11 @@ type IPEntry struct {
 // MACEntry represents a MAC address record retrieved from the underlying
 // provider.
 type MACEntry struct {
-	Network  string
-	MAC      net.HardwareAddr
-	IP       net.IP
-	Duration time.Duration
-	Attr     map[string]string
+	Network     string
+	MAC         net.HardwareAddr
+	Assignments AssignmentSet
+	Duration    time.Duration
+	Attr        map[string]string
 }
 
 // Lease represents a DHCP lease.
@@ -261,14 +258,14 @@ type LeaseAttr struct {
 }
 */
 
-// MAC represents the data associated with a specific MAC.
+// MAC represents the data associated with a specific MAC address.
 type MAC struct {
 	Attr
 	Addr        net.HardwareAddr
 	Device      string // FIXME: What type are we using for device IDs?
 	Type        string
 	Restriction Mode // TODO: Decide whether this is inclusive or exclusive
-	IP          AssignmentSet
+	Assignments AssignmentSet
 }
 
 /*
@@ -290,7 +287,7 @@ type Mode uint8
 
 const (
 	// Dynamic IP addresses are assigned automatically from an IP pool.
-	Dynamic Mode = 1 << iota
+	Dynamic Mode = iota + 1
 	// Reserved IP addresses are manually assigned to a specific MAC.
 	Reserved
 )
@@ -304,6 +301,45 @@ func (mode Mode) String() string {
 	default:
 		return ""
 	}
+}
+
+// Pool represents an IP address pool from which IP addresses can be dynamically
+// assigned.
+type Pool struct {
+	Name     string
+	Mode     Mode
+	Priority int
+	Created  time.Time
+	Range    *net.IPNet
+}
+
+// PoolSet represents a set of IP address pools that can be sorted
+// according to the Pool selection rules.
+type PoolSet []*Pool
+
+func (slice PoolSet) Len() int {
+	return len(slice)
+}
+
+func (slice PoolSet) Less(i, j int) bool {
+	a, b := slice[i], slice[j]
+	if a.Priority < b.Priority {
+		return true
+	}
+	if a.Priority > b.Priority {
+		return false
+	}
+	if a.Created.Before(b.Created) {
+		return true
+	}
+	if b.Created.Before(a.Created) {
+		return false
+	}
+	return false
+}
+
+func (slice PoolSet) Swap(i, j int) {
+	slice[i], slice[j] = slice[j], slice[i]
 }
 
 // Assignment represents an IP address assigned to a MAC address.

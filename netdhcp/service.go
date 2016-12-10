@@ -380,13 +380,13 @@ func (s *service) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, reqO
 		// Process Request
 		log.Printf("DHCP Request (%s) from %s wanting %s...\n", state, addr.String(), requestedIP.String())
 
-		data, err := s.Attr(ctx, addr)
+		attr, err := s.Attr(ctx, addr)
 		if err != nil {
 			// FIXME: Log error?
 			return nil
 		}
 
-		_, _, err = s.selectAssignment(context.Background(), data.Assignments, addr)
+		_, _, err = s.selectAssignment(context.Background(), attr.Pools, data.Assignments, addr)
 		if err != nil {
 			// FIXME: Log error?
 			return nil
@@ -484,7 +484,7 @@ func (s *service) pepareLease(target net.HardwareAddr) {
 
 }
 
-func (s *service) selectAssignment(ctx context.Context, assignments AssignmentSet, target net.HardwareAddr) (*Assignment, *Lease, error) {
+func (s *service) selectAssignment(ctx context.Context, pools PoolSet, assignments AssignmentSet, target net.HardwareAddr) (*Assignment, *Lease, error) {
 	// Enumerate all reservations and dynamic allocations and select the most
 	// appropriate lease based on the following algorithm:
 	// 1. Reservation with active lease matching this MAC, sorted by priority and then by recency
