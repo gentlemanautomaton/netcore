@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"os"
 	"strings"
 )
@@ -15,9 +16,29 @@ var setDHCPSubnet = flag.String("setDHCPSubnet", "", "Overwrite (permanently) th
 var setDHCPLeaseDuration = flag.String("setDHCPLeaseDuration", "", "Overwrite (permanently) the default DHCP lease duration for this zone (requires setZone flag or it'll no-op).")
 var setDHCPTFTP = flag.String("setDHCPTFTP", "", "Overwrite (permanently) the DHCP TFTP Server Name for this machine (or set it to empty to disable DHCP).")
 
+var (
+	commandSet = []string{"init"}
+)
+
+func usage(commands []string, fs *flag.FlagSet) {
+	fmt.Fprintf(os.Stderr, "Usage of %s:\n", os.Args[0])
+
+	if commands != nil {
+		fmt.Fprintf(os.Stderr, fmt.Sprintf("  %s", strings.Join(commands, "\n  ")))
+	}
+
+	if fs != nil {
+		fs.PrintDefaults()
+	}
+}
+
 func main() {
-	if len(os.Args) < 1 {
+	fs := flag.NewFlagSet(os.Args[0], flag.ContinueOnError)
+	fs.Parse(os.Args)
+
+	if len(os.Args) < 2 {
 		// TODO: Display help
+		usage(commandSet, fs)
 		os.Exit(2)
 	}
 
