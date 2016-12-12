@@ -17,12 +17,6 @@ type ServerConfig interface {
 	ServerSubnet() *net.IPNet
 }
 
-/*
-type ServerConn interface {
-
-}
-*/
-
 // MergeServerConfig will overlay the provided sets of server configuration data
 // and return the result. The data is overlayed in order, so later values
 // ovewrite earlier values.
@@ -115,59 +109,61 @@ func MergeNetworkID(ns ...NetworkIDConfig) (network string) {
 	return
 }
 
-// LeaseConfig is a source of lease configuration data.
-type LeaseConfig interface {
-	LeaseSubnet() *net.IPNet
-	LeaseGateway() net.IP
-	LeaseDomain() string
-	LeaseTFTP() string
-	LeaseNTP() net.IP
-	LeasePools() PoolSet
-	LeaseDuration() time.Duration
+// BindingConfig is a source of binding configuration data.
+type BindingConfig interface {
+	// TODO: Consider adding a "present" or "specified" boolean as a return value
+	BindingSubnet() *net.IPNet
+	BindingGateway() net.IP
+	BindingDomain() string
+	BindingTFTP() string
+	BindingNTP() net.IP
+	BindingPools() PoolSet
+	BindingAssignments() AssignmentSet
+	BindingLeaseDuration() time.Duration
 }
 
-// MergeLeaseConfig will overlay the provided sets of DHCP lease configuration
-// data and return the result. The data is overlayed in order, so later values
-// ovewrite earlier values.
-func MergeLeaseConfig(c ...LeaseConfig) (attr Attr) {
+// MergeBindingConfig will overlay the provided sets of DHCP binding
+// configuration data and return the result. The data is overlayed in order, so
+// later values ovewrite earlier values.
+func MergeBindingConfig(c ...BindingConfig) (attr Attr) {
 	if len(c) == 0 {
 		return
 	}
 
 	for _, s := range c[:] {
-		if subnet := s.LeaseSubnet(); subnet != nil {
+		if subnet := s.BindingSubnet(); subnet != nil {
 			attr.Subnet = subnet
 		}
-		if gateway := s.LeaseGateway(); gateway != nil {
+		if gateway := s.BindingGateway(); gateway != nil {
 			attr.Gateway = gateway
 		}
-		if domain := s.LeaseDomain(); domain != "" {
+		if domain := s.BindingDomain(); domain != "" {
 			attr.Domain = domain
 		}
-		if tftp := s.LeaseTFTP(); tftp != "" {
+		if tftp := s.BindingTFTP(); tftp != "" {
 			attr.TFTP = tftp
 		}
 	}
 	return
 }
 
-// ValidateLeaseConfig returns an error if the lease configuration is invalid,
-// otherwise it returns nil.
-func ValidateLeaseConfig(c LeaseConfig) error {
+// ValidateBindingConfig returns an error if the binding configuration is
+// invalid, otherwise it returns nil.
+func ValidateBindingConfig(c BindingConfig) error {
 	if c == nil {
 		return ErrNoConfig
 	}
-	if c.LeaseGateway() == nil {
+	if c.BindingGateway() == nil {
 		return ErrNoLeaseGateway
 	}
-	if c.LeaseSubnet() == nil {
+	if c.BindingSubnet() == nil {
 		return ErrNoLeaseSubnet
 	}
 	// FIXME: Check IP address assignment
 	return nil
 }
 
-// Attr represents a set of attributes for a DHCP lease.
+// Attr represents a set of attributes for a DHCP binding.
 type Attr struct {
 	Subnet   *net.IPNet
 	Gateway  net.IP
@@ -180,45 +176,56 @@ type Attr struct {
 	// TODO: Adds boatloads of DHCP options
 }
 
-// LeaseSubnet returns the subnet that the DHCP server will provide to clients
+// BindingSubnet returns the subnet that the DHCP server will provide to clients
 // when issuing leases.
-func (a *Attr) LeaseSubnet() *net.IPNet {
+func (a *Attr) BindingSubnet() *net.IPNet {
 	return a.Subnet
 }
 
-// LeaseGateway returns the gateway that the DHCP server will provide to clients
-// when issuing leases.
-func (a *Attr) LeaseGateway() net.IP {
+// BindingGateway returns the gateway that the DHCP server will provide to
+// clients when issuing leases.
+func (a *Attr) BindingGateway() net.IP {
 	return a.Gateway
 }
 
-// LeaseDomain returns the domain that the DHCP server will provide to clients
+// BindingDomain returns the domain that the DHCP server will provide to clients
 // when issuing leases.
-func (a *Attr) LeaseDomain() string {
+func (a *Attr) BindingDomain() string {
 	return a.Domain
 }
 
-// LeaseTFTP returns the TFTP address that the DHCP server provide issue to
+// BindingTFTP returns the TFTP address that the DHCP server provide issue to
 // clients when issuing leases.
-func (a *Attr) LeaseTFTP() string {
+func (a *Attr) BindingTFTP() string {
 	return a.TFTP
 }
 
-// LeaseNTP returns the NTP address that the DHCP server will provide to
+// BindingNTP returns the NTP address that the DHCP server will provide to
 // clients when issuing leases.
-func (a *Attr) LeaseNTP() net.IP {
+func (a *Attr) BindingNTP() net.IP {
 	return a.NTP
 }
 
-// LeasePools returns the IP address pool that the DHCP server will issue
+// BindingPools returns the IP address pool that the DHCP server will issue
 // addresses from when granting leases.
-func (a *Attr) LeasePools() PoolSet {
+func (a *Attr) BindingPools() PoolSet {
 	return a.Pools
 }
 
-// LeaseDuration returns the lease duration that the DHCP server will use
+// TODO: Consider adding this function and have it return nothing here, then
+//       override it on the MAC type. Doing this would allow the
+//       server.Binding() function to return a single BindingConfig that
+//       includes all of the needed information.
+
+// BindingAssignments returns the set of IP assignments for the binding,
+// including both reserved and previous dynamic IP assignments.
+func (a *Attr) BindingAssignments() AssignmentSet {
+	return nil
+}
+
+// BindingLeaseDuration returns the lease duration that the DHCP server will use
 // when issuing leases.
-func (a *Attr) LeaseDuration() time.Duration {
+func (a *Attr) BindingLeaseDuration() time.Duration {
 	return a.Duration
 }
 
@@ -237,6 +244,7 @@ type IPEntry struct {
 	MAC net.HardwareAddr
 }
 
+/*
 // MACEntry represents a MAC address record retrieved from the underlying
 // provider.
 type MACEntry struct {
@@ -246,6 +254,7 @@ type MACEntry struct {
 	Duration    time.Duration
 	Attr        map[string]string
 }
+*/
 
 // Lease represents a DHCP lease.
 type Lease struct {
@@ -258,7 +267,7 @@ type LeaseAttr struct {
 }
 */
 
-// MAC represents the data associated with a specific MAC address.
+// MAC represents the binding configuration for a specific MAC address.
 type MAC struct {
 	Attr
 	Addr        net.HardwareAddr
@@ -266,6 +275,12 @@ type MAC struct {
 	Type        string
 	Restriction Mode // TODO: Decide whether this is inclusive or exclusive
 	Assignments AssignmentSet
+}
+
+// BindingAssignments returns the set of IP assignments for the binding,
+// including both reserved and previous dynamic IP assignments.
+func (m *MAC) BindingAssignments() AssignmentSet {
+	return m.Assignments
 }
 
 /*

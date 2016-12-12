@@ -347,9 +347,9 @@ func (mc MACContext) valid() error {
 	return nil
 }
 
-// valid returns an error if the MAC context is invalid.
-func (mc MACContext) Read() (MACEntry, error) {
-	return MACEntry{}, errors.New("Not implemented yet.")
+// Read returns a copy of the MAC configuration.
+func (mc MACContext) Read() (MAC, error) {
+	return MAC{}, errors.New("Not implemented yet.")
 }
 
 // LeaseContext provides access to lease management functions for a particular

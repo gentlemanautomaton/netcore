@@ -111,8 +111,8 @@ func (s *Service) build(p Provider, id string) (*service, error) {
 		return nil, err
 	}
 
-	attr := MergeLeaseConfig(global, instance, network) // TODO: Review order
-	if err := ValidateLeaseConfig(&attr); err != nil {
+	attr := MergeBindingConfig(global, instance, network) // TODO: Review order
+	if err := ValidateBindingConfig(&attr); err != nil {
 		return nil, err
 	}
 
@@ -290,13 +290,13 @@ func (s *service) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, reqO
 			}
 		*/
 
-		data, err := s.Attr(ctx, addr)
+		binding, err := s.Binding(ctx, addr)
 		if err != nil {
 			// FIXME: Log error?
 			return nil
 		}
 
-		_, _, err = s.selectAssignment(context.Background(), data.Assignments, addr)
+		_, _, err = s.selectBinding(context.Background(), &binding, addr)
 		if err != nil {
 			// FIXME: Log error?
 			return nil
@@ -380,13 +380,13 @@ func (s *service) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, reqO
 		// Process Request
 		log.Printf("DHCP Request (%s) from %s wanting %s...\n", state, addr.String(), requestedIP.String())
 
-		attr, err := s.Attr(ctx, addr)
+		binding, err := s.Binding(ctx, addr)
 		if err != nil {
 			// FIXME: Log error?
 			return nil
 		}
 
-		_, _, err = s.selectAssignment(context.Background(), attr.Pools, data.Assignments, addr)
+		_, _, err = s.selectBinding(context.Background(), &binding, addr)
 		if err != nil {
 			// FIXME: Log error?
 			return nil
@@ -484,14 +484,14 @@ func (s *service) pepareLease(target net.HardwareAddr) {
 
 }
 
-func (s *service) selectAssignment(ctx context.Context, pools PoolSet, assignments AssignmentSet, target net.HardwareAddr) (*Assignment, *Lease, error) {
+func (s *service) selectBinding(ctx context.Context, binding BindingConfig, target net.HardwareAddr) (*Assignment, *Lease, error) {
 	// Enumerate all reservations and dynamic allocations and select the most
 	// appropriate lease based on the following algorithm:
 	// 1. Reservation with active lease matching this MAC, sorted by priority and then by recency
 	// 2. Reservation without any active lease, sorted by priority and then by recency
-	// 3. Dynamic Allocation with active lease matching this MAC, sorted by priority and then by recency
-	// 4. Dynamic Allocation without any active lease, sorted by priority and then by recency
-	// 5. New Dynamic Allocation from pool
+	// 3. Dynamic Allocation with active lease matching this MAC and current pools, sorted by priority and then by recency
+	// 4. Dynamic Allocation without any active lease matching the current pools, sorted by priority and then by recency
+	// 5. New Dynamic Allocation from the current pools, sorted by priority
 
 	// TODO: Consider whether we should always give the lease of highest priority
 	//       regardless of whatever the current lease is.
@@ -501,7 +501,13 @@ func (s *service) selectAssignment(ctx context.Context, pools PoolSet, assignmen
 		Err   error
 	}
 
+	//pools := binding.BindingPools()
+	assignments := binding.BindingAssignments()
+
+	// TODO: Use the pools
+
 	if len(assignments) == 0 {
+		// FIXME: Lack of assignments means we should select from the pool, not return an error
 		return nil, nil, errors.New("No assignments specified.")
 	}
 
@@ -632,10 +638,10 @@ func (s *service) maintainDNSRecords(entry *MACEntry, packet dhcp4.Packet, reqOp
 // TODO: Maintain a cache of observers for recently retrieved MAC prefix data.
 //       The observers should be closed and removed from the cache after some
 //       duration since the last retrieval (which could be days).
-func (s *service) Attr(ctx context.Context, addr net.HardwareAddr) (attr Attr, err error) {
+func (s *service) Binding(ctx context.Context, addr net.HardwareAddr) (attr Attr, err error) {
 	addrSet := macPrefixes(addr)
-	gpSlice := make([]LeaseConfig, 0, len(addrSet))
-	npSlice := make([]LeaseConfig, 0, len(addrSet))
+	gpSlice := make([]BindingConfig, 0, len(addrSet))
+	npSlice := make([]BindingConfig, 0, len(addrSet))
 
 	// Global MAC Prefixes
 	for _, paddr := range macPrefixes(addr) {
@@ -648,9 +654,9 @@ func (s *service) Attr(ctx context.Context, addr net.HardwareAddr) (attr Attr, e
 			npSlice = append(npSlice, nprefix)
 		}
 	}
-	gpAttr := MergeLeaseConfig(gpSlice...)
-	npAttr := MergeLeaseConfig(npSlice...)
-	attr = MergeLeaseConfig(&s.attr, &gpAttr, &npAttr)
+	gpAttr := MergeBindingConfig(gpSlice...)
+	npAttr := MergeBindingConfig(npSlice...)
+	attr = MergeBindingConfig(&s.attr, &gpAttr, &npAttr)
 	return
 }
 
