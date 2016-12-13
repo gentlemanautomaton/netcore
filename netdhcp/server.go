@@ -13,20 +13,24 @@ import (
 	"github.com/krolaw/dhcp4"
 )
 
-// Service provides netcore DHCP services.
-type Service struct {
+// TODO: Maintain a "config.gob" and/or "auth.gob" file that can bootstrap the
+//       provider configuration. The file should be maintained so that it always
+//       holds the most recent configuration obtained from the provider.
+
+// Server provides netcore DHCP services.
+type Server struct {
 	mutex   sync.RWMutex // guards access to v
 	p       Provider
 	id      string
-	v       *service // current view of the service, protected by mutex
+	v       *server // current view of the server, protected by mutex
 	started chan bool
 	done    chan Completion
 }
 
-// NewService creates a new netcore DHCP service with the given data provider
-// service instance ID.
-func NewService(provider Provider, instance string) *Service {
-	s := &Service{
+// NewServer creates a new netcore DHCP server with the given configuration
+// provider and instance ID.
+func NewServer(provider Provider, instance string) *Server {
+	s := &Server{
 		p:       provider,
 		id:      instance,
 		started: make(chan bool, 1),
@@ -38,10 +42,10 @@ func NewService(provider Provider, instance string) *Service {
 	return s
 }
 
-func (s *Service) init() {
+func (s *Server) init() {
 	s.mutex.RLock()
-	id := s.id
 	p := s.p
+	id := s.id
 	s.mutex.RUnlock()
 
 	if p == nil {
@@ -65,22 +69,22 @@ func (s *Service) init() {
 	s.signalDone(true, err)
 }
 
-func (s *Service) failedInit(err error) {
+func (s *Server) failedInit(err error) {
 	s.signalStarted(false)
 	s.signalDone(false, err)
 }
 
-func (s *Service) signalStarted(success bool) {
+func (s *Server) signalStarted(success bool) {
 	s.started <- success
 	close(s.started)
 }
 
-func (s *Service) signalDone(initialized bool, err error) {
+func (s *Server) signalDone(initialized bool, err error) {
 	s.done <- Completion{false, err}
 	close(s.done)
 }
 
-func (s *Service) build(p Provider, id string) (*service, error) {
+func (s *Server) build(p Provider, id string) (*server, error) {
 	ctx := context.Background() // FIXME: Use a real cancellable context
 
 	gc := NewContext(p)
@@ -112,11 +116,11 @@ func (s *Service) build(p Provider, id string) (*service, error) {
 	}
 
 	attr := MergeBindingConfig(global, instance, network) // TODO: Review order
-	if err := ValidateBindingConfig(&attr); err != nil {
+	if err := ValidateBindingConfig(&attr); err != nil {  // TODO: Consider not validating here because the global/instance/network configuration could be partial
 		return nil, err
 	}
 
-	srv := &service{
+	srv := &server{
 		id:       id,
 		global:   gc,
 		instance: ic,
@@ -133,8 +137,8 @@ func (s *Service) build(p Provider, id string) (*service, error) {
 	return srv, nil
 }
 
-// view returns a consistent view of the service.
-func (s *Service) view() *service {
+// view returns a consistent view of the server.
+func (s *Server) view() *server {
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
 	return s.v
@@ -167,7 +171,7 @@ func watch(ctx context.Context, p Provider, id string, gs chan GlobalResult, is 
 }
 */
 
-func (s *Service) sync(chan params) {
+func (s *Server) sync(chan params) {
 	// TODO: Figure this out
 	/*
 		var (
@@ -231,20 +235,20 @@ func (s *Service) sync(chan params) {
 	*/
 }
 
-// Started returns a channel that will be signaled when the service has started
-// or failed to start. If the returned value is true the service started
+// Started returns a channel that will be signaled when the server has started
+// or failed to start. If the returned value is true the server started
 // succesfully.
-func (s *Service) Started() chan bool {
+func (s *Server) Started() chan bool {
 	return s.started
 }
 
-// Done returns a channel that will be signaled when the service exits.
-func (s *Service) Done() chan Completion {
+// Done returns a channel that will be signaled when the server exits.
+func (s *Server) Done() chan Completion {
 	return s.done
 }
 
-// ServeDHCP is called by dhcp4.ListenAndServe when the service is started
-func (s *Service) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, reqOptions dhcp4.Options) (response dhcp4.Packet) {
+// ServeDHCP is called by dhcp4.ListenAndServe when the server is started
+func (s *Server) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, reqOptions dhcp4.Options) (response dhcp4.Packet) {
 	return s.view().ServeDHCP(packet, msgType, reqOptions)
 }
 
@@ -254,9 +258,9 @@ type cache struct {
 	network  Network
 }
 
-// service operates within a consistent cached view of global, instance and
+// server operates with a consistent cached view of global, instance and
 // network configuration.
-type service struct {
+type server struct {
 	id       string
 	global   GlobalContext
 	instance InstanceContext
@@ -266,21 +270,21 @@ type service struct {
 	//cache    cache
 }
 
-func (s *service) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, reqOptions dhcp4.Options) (response dhcp4.Packet) {
+func (s *server) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, reqOptions dhcp4.Options) (response dhcp4.Packet) {
 	ctx := context.TODO() // FIXME: Use a real cancellable context
 
 	switch msgType {
 	case dhcp4.Discover:
 		// RFC 2131 4.3.1
 		// FIXME: send to StatHat and/or increment a counter
-		addr := packet.CHAddr()
+		haddr := packet.CHAddr()
 
 		// Check MAC blacklist
-		if !s.isMACPermitted(addr) {
-			log.Printf("DHCP Discover from %s\n is not permitted", addr.String())
+		if !s.isMACPermitted(haddr) {
+			log.Printf("DHCP Discover from %s\n is not permitted", haddr.String())
 			return nil
 		}
-		log.Printf("DHCP Discover from %s\n", addr.String())
+		log.Printf("DHCP Discover from %s\n", haddr.String())
 
 		/*
 			data, found, err := s.net.MAC.Lookup(context.Background(), addr)
@@ -290,13 +294,13 @@ func (s *service) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, reqO
 			}
 		*/
 
-		binding, err := s.Binding(ctx, addr)
+		binding, err := s.Binding(ctx, haddr)
 		if err != nil {
 			// FIXME: Log error?
 			return nil
 		}
 
-		_, _, err = s.selectBinding(context.Background(), &binding, addr)
+		_, _, err = s.selectBinding(context.Background(), &binding, haddr)
 		if err != nil {
 			// FIXME: Log error?
 			return nil
@@ -340,53 +344,53 @@ func (s *service) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, reqO
 	case dhcp4.Request:
 		// RFC 2131 4.3.2
 		// FIXME: send to StatHat and/or increment a counter
-		addr := packet.CHAddr()
+		haddr := packet.CHAddr()
 
 		// Check MAC blacklist
-		if !s.isMACPermitted(addr) {
-			log.Printf("DHCP Request from %s\n is not permitted", addr.String())
+		if !s.isMACPermitted(haddr) {
+			log.Printf("DHCP Request from %s\n is not permitted", haddr.String())
 			return nil
 		}
 
 		// Check IP presence
 		state, requestedIP := s.getRequestState(packet, reqOptions)
-		log.Printf("DHCP Request (%s) from %s...\n", state, addr.String())
+		log.Printf("DHCP Request (%s) from %s...\n", state, haddr.String())
 		if len(requestedIP) == 0 || requestedIP.IsUnspecified() { // no IP provided at all... why? FIXME
-			log.Printf("DHCP Request (%s) from %s (empty IP, so we're just ignoring this request)\n", state, addr.String())
+			log.Printf("DHCP Request (%s) from %s (empty IP, so we're just ignoring this request)\n", state, haddr.String())
 			return nil
 		}
 
 		// Check IPv4
 		if len(requestedIP) != net.IPv4len {
-			log.Printf("DHCP Request (%s) from %s wanting %s (IPv6 address requested, so we're just ignoring this request)\n", state, addr.String(), requestedIP.String())
+			log.Printf("DHCP Request (%s) from %s wanting %s (IPv6 address requested, so we're just ignoring this request)\n", state, haddr.String(), requestedIP.String())
 			return nil
 		}
 
 		// Check IP subnet
 		if !s.config.Subnet.Contains(requestedIP) {
-			log.Printf("DHCP Request (%s) from %s wanting %s (we reject due to wrong subnet)\n", state, addr.String(), requestedIP.String())
+			log.Printf("DHCP Request (%s) from %s wanting %s (we reject due to wrong subnet)\n", state, haddr.String(), requestedIP.String())
 			return dhcp4.ReplyPacket(packet, dhcp4.NAK, s.config.IP.To4(), nil, 0, nil)
 		}
 
 		// Check Target Server
 		targetServerIP := packet.SIAddr()
 		if len(targetServerIP) > 0 && !targetServerIP.IsUnspecified() {
-			log.Printf("DHCP Request (%s) from %s wanting %s is in response to a DHCP offer from %s\n", state, addr.String(), requestedIP.String(), targetServerIP.String())
+			log.Printf("DHCP Request (%s) from %s wanting %s is in response to a DHCP offer from %s\n", state, haddr.String(), requestedIP.String(), targetServerIP.String())
 			if s.config.IP.Equal(targetServerIP) {
 				return nil
 			}
 		}
 
 		// Process Request
-		log.Printf("DHCP Request (%s) from %s wanting %s...\n", state, addr.String(), requestedIP.String())
+		log.Printf("DHCP Request (%s) from %s wanting %s...\n", state, haddr.String(), requestedIP.String())
 
-		binding, err := s.Binding(ctx, addr)
+		binding, err := s.Binding(ctx, haddr)
 		if err != nil {
 			// FIXME: Log error?
 			return nil
 		}
 
-		_, _, err = s.selectBinding(context.Background(), &binding, addr)
+		_, _, err = s.selectBinding(context.Background(), &binding, haddr)
 		if err != nil {
 			// FIXME: Log error?
 			return nil
@@ -435,20 +439,20 @@ func (s *service) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, reqO
 			}
 		*/
 
-		log.Printf("DHCP Request (%s) from %s wanting %s (we reject due to address collision)\n", state, addr.String(), requestedIP.String())
+		log.Printf("DHCP Request (%s) from %s wanting %s (we reject due to address collision)\n", state, haddr.String(), requestedIP.String())
 		return dhcp4.ReplyPacket(packet, dhcp4.NAK, s.config.IP.To4(), nil, 0, nil)
 
 	case dhcp4.Decline:
 		// RFC 2131 4.3.3
 		// FIXME: release from DB?  tick a flag?  increment a counter?  send to StatHat?
-		addr := packet.CHAddr()
-		log.Printf("DHCP Decline from %s\n", addr.String())
+		haddr := packet.CHAddr()
+		log.Printf("DHCP Decline from %s\n", haddr.String())
 
 	case dhcp4.Release:
 		// RFC 2131 4.3.4
 		// FIXME: release from DB?  tick a flag?  increment a counter?  send to StatHat?
-		addr := packet.CHAddr()
-		log.Printf("DHCP Release from %s\n", addr.String())
+		haddr := packet.CHAddr()
+		log.Printf("DHCP Release from %s\n", haddr.String())
 
 	case dhcp4.Inform:
 		// RFC 2131 4.3.5
@@ -456,13 +460,13 @@ func (s *service) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, reqO
 		// FIXME: release from DB?  tick a flag?  increment a counter?  send to StatHat?
 		// FIXME: we should reply with valuable info, but not assign an IP to this client, per RFC 2131 for DHCPINFORM
 		// NOTE: the client's IP is supposed to only be in the ciaddr field, not the requested IP field, per RFC 2131 4.4.3
-		//addr := packet.CHAddr()
+		//haddr := packet.CHAddr()
 		ip := packet.CIAddr()
 		if len(ip) > 0 && !ip.IsUnspecified() {
 			/*
-				log.Printf("DHCP Inform from %s for %s \n", addr.String(), ip.String())
+				log.Printf("DHCP Inform from %s for %s \n", haddr.String(), ip.String())
 				if len(ip) == net.IPv4len && s.config.GuestPool().Contains(ip) {
-					entry, found, _ := s.p.MAC(addr, true)
+					entry, found, _ := s.p.MAC(haddr, true)
 					if found {
 						options := s.getOptionsFromMAC(entry)
 						return informReplyPacket(packet, dhcp4.ACK, s.cfg.IP().To4(), options.SelectOrderOrAll(reqOptions[dhcp4.OptionParameterRequestList]))
@@ -475,16 +479,16 @@ func (s *service) ServeDHCP(packet dhcp4.Packet, msgType dhcp4.MessageType, reqO
 	return nil
 }
 
-func (s *service) isMACPermitted(addr net.HardwareAddr) bool {
+func (s *server) isMACPermitted(haddr net.HardwareAddr) bool {
 	// TODO: determine whether or not this MAC should be permitted to get an IP at all (blacklist? whitelist?)
 	return true
 }
 
-func (s *service) pepareLease(target net.HardwareAddr) {
+func (s *server) pepareLease(target net.HardwareAddr) {
 
 }
 
-func (s *service) selectBinding(ctx context.Context, binding BindingConfig, target net.HardwareAddr) (*Assignment, *Lease, error) {
+func (s *server) selectBinding(ctx context.Context, binding BindingConfig, target net.HardwareAddr) (*Assignment, *Lease, error) {
 	// Enumerate all reservations and dynamic allocations and select the most
 	// appropriate lease based on the following algorithm:
 	// 1. Reservation with active lease matching this MAC, sorted by priority and then by recency
@@ -546,7 +550,7 @@ func (s *service) selectBinding(ctx context.Context, binding BindingConfig, targ
 	return nil, nil, nil
 }
 
-func (s *service) getRequestState(packet dhcp4.Packet, reqOptions dhcp4.Options) (string, net.IP) {
+func (s *server) getRequestState(packet dhcp4.Packet, reqOptions dhcp4.Options) (string, net.IP) {
 	state := "NEW"
 	requestedIP := net.IP(reqOptions[dhcp4.OptionRequestedIPAddress])
 	if len(requestedIP) == 0 || requestedIP.IsUnspecified() { // empty
@@ -557,7 +561,7 @@ func (s *service) getRequestState(packet dhcp4.Packet, reqOptions dhcp4.Options)
 }
 
 /*
-func (s *service) getLeaseDurationForRequest(reqOptions dhcp4.Options, defaultDuration time.Duration) time.Duration {
+func (s *server) getLeaseDurationForRequest(reqOptions dhcp4.Options, defaultDuration time.Duration) time.Duration {
 	// If a requested lease duration is accepted by policy we hand it back to them
 	// If a requested lease duration is not accepted by policy we constrain it to the policy's minimum and maximum
 	// If a lease duration was not requested then we give them the default duration provided to this function
@@ -582,7 +586,7 @@ func (s *service) getLeaseDurationForRequest(reqOptions dhcp4.Options, defaultDu
 	return leaseDuration
 }
 
-func (s *service) getIPFromPool() net.IP {
+func (s *server) getIPFromPool() net.IP {
 	// locate an unused IP address (can this be more efficient?  yes!  FIXME)
 	// TODO: Create a channel and spawn a goproc with something like this function to feed it; then have the server pull addresses from that channel
 	gp := s.cfg.GuestPool()
@@ -597,7 +601,7 @@ func (s *service) getIPFromPool() net.IP {
 */
 
 /*
-func (s *service) maintainDNSRecords(entry *MACEntry, packet dhcp4.Packet, reqOptions dhcp4.Options) {
+func (s *server) maintainDNSRecords(entry *MACEntry, packet dhcp4.Packet, reqOptions dhcp4.Options) {
 	options := s.getOptionsFromMAC(entry)
 	if domain, ok := options[dhcp4.OptionDomainName]; ok {
 		// FIXME:  danger!  we're mixing systems here...  if we keep this up, we will have spaghetti!
@@ -638,7 +642,7 @@ func (s *service) maintainDNSRecords(entry *MACEntry, packet dhcp4.Packet, reqOp
 // TODO: Maintain a cache of observers for recently retrieved MAC prefix data.
 //       The observers should be closed and removed from the cache after some
 //       duration since the last retrieval (which could be days).
-func (s *service) Binding(ctx context.Context, addr net.HardwareAddr) (attr Attr, err error) {
+func (s *server) Binding(ctx context.Context, addr net.HardwareAddr) (attr Attr, err error) {
 	addrSet := macPrefixes(addr)
 	gpSlice := make([]BindingConfig, 0, len(addrSet))
 	npSlice := make([]BindingConfig, 0, len(addrSet))
@@ -661,7 +665,7 @@ func (s *service) Binding(ctx context.Context, addr net.HardwareAddr) (attr Attr
 }
 
 /*
-func (s *service) getOptionsFromMAC(entry *MACEntry) dhcp4.Options {
+func (s *server) getOptionsFromMAC(entry *MACEntry) dhcp4.Options {
 	options := dhcp4.Options{}
 	defaultOptions := s.cfg.Options()
 
