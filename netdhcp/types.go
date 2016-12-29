@@ -20,9 +20,10 @@ type IPEntry struct {
 	MAC net.HardwareAddr
 }
 
-// Mode represents whether an IP address has been dynamically assigned to a
-// MAC or has been manually reserved for it. When determining which lease to
-// provide to a MAC, reservations always have first priority.
+// Mode represents the type of IP address allocation, indicating whether the
+// address has been dynamically assigned to a MAC or has been manually reserved
+// for it. When determining which address to assign to a client, reservations
+// always have first priority.
 type Mode uint8
 
 const (
