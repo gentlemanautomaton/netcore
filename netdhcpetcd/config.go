@@ -10,11 +10,11 @@ import (
 )
 
 // Init creates the initial etcd buckets for DHCP data.
-func (p *Provider) Init() error {
+func (p *Provider) Init(ctx context.Context) error {
 	buckets := []string{RootBucket, ConfigBucket, ServerBucket, NetworkBucket, HostBucket, HardwareBucket}
-	keys := client.NewKeysAPI(p.c)
-	for _, b := range buckets {
-		_, err := keys.Set(context.Background(), b, "", &client.SetOptions{Dir: true})
+	//keys := client.NewKeysAPI(p.c)
+	for _, key := range buckets {
+		_, err := p.c.Put(ctx, key, "", &client.SetOptions{Dir: true})
 		if err != nil {
 			return err
 		}
